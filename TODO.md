@@ -1,0 +1,25 @@
+# TODO
+- [x] Nice Error output
+- [x] Output skipped list if failures
+- [x] Per package dots
+- [x] Per package spinners
+- [x] display flags
+- [x] Build failures
+- [x] filter vendor
+- [x] Testname display
+- [x] run args
+  - TestName run
+  - File name run
+  - File name with line number run
+- [x] Output cached status's
+- [x] Output Elapsed times
+    - [x] package elsapsed (from output)
+    - [x] test elapsed will have to time ourselves. Start on run, pause, cont, done. Then sum
+    - [ ] output/rank tests that take the longest
+- [x] Relative filenames (remove package name) https://pkg.go.dev/golang.org/x/mod/modfile#File
+- [ ] Allow configurable text templates, buffered, non-buffered
+- [ ] watch command
+- [ ] support go test flags
+- [ ] output json format maybe ?
+- [ ] install test deps if an error happens
+- [ ] build error excerpts?
