@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -233,6 +234,19 @@ func cleanMsg(testName, output string) string {
 		return ""
 	}
 	return strings.TrimSpace(msg)
+}
+
+func (res *Set) RankedTests() []*Test {
+	tests := []*Test{}
+	for _, pkg := range res.Packages {
+		for _, test := range pkg.Results {
+			tests = append(tests, test)
+		}
+	}
+	sort.Slice(tests, func(i, j int) bool {
+		return tests[i].TimeElapsed > tests[j].TimeElapsed
+	})
+	return tests[:10]
 }
 
 func (res *Set) String() string {

@@ -23,6 +23,7 @@ var (
 	filepathPattern = regexp.MustCompile(`^([.*/\.^:]*[^:]*):*(.+)*`)
 	displayFlag     string
 	watchFlag       bool
+	rankFlag        bool
 )
 
 var rootCmd = &cobra.Command{
@@ -45,7 +46,8 @@ with color.`,
 		} else {
 			modName = module.Mod.Path
 		}
-		cobra.CheckErr(test(modName, testArgs))
+		res, err := test(modName, testArgs)
+		cobra.CheckErr(err)
 		if watchFlag {
 			notifier, err := watcher.New(path)
 			cobra.CheckErr(err)
@@ -53,12 +55,16 @@ with color.`,
 				test(modName, []string{filepath.Dir(path)})
 			})
 		}
+		if rankFlag {
+			display.Ranking(os.Stdout, res)
+		}
 	},
 }
 
 func init() {
 	rootCmd.Flags().StringVarP(&displayFlag, "display", "d", "dots", "change the display of the test outputs [dots, pdots, names, pnames]")
 	rootCmd.Flags().BoolVarP(&watchFlag, "watch", "w", false, "watch for file changes and re-run tests")
+	rootCmd.Flags().BoolVarP(&rankFlag, "rank", "r", false, "output ranking of the 10 slowest tests")
 }
 
 // Execute is the main entry into the cli
@@ -66,24 +72,24 @@ func Execute() {
 	rootCmd.Execute()
 }
 
-func test(modName string, args []string) error {
+func test(modName string, args []string) (*results.Set, error) {
+	res := results.New(modName)
 	r, w := io.Pipe()
 	var wg sync.WaitGroup
-	go process(modName, &wg, r)
+	go process(&wg, res, modName, r)
 	runCommand(w, args)
 	if err := r.Close(); err != nil {
-		return err
+		return nil, err
 	}
 	if err := w.Close(); err != nil {
-		return err
+		return nil, err
 	}
 	wg.Wait()
-	return nil
+	return res, nil
 }
 
-func process(modName string, wg *sync.WaitGroup, r io.Reader) {
+func process(wg *sync.WaitGroup, res *results.Set, modName string, r io.Reader) {
 	deco := display.Decorators[displayFlag](os.Stdout)
-	res := results.New(modName)
 	wg.Add(1)
 	defer wg.Done()
 	res.Parse(r, deco.Render)
