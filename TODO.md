@@ -18,6 +18,7 @@
 - [x] Relative filenames (remove package name) https://pkg.go.dev/golang.org/x/mod/modfile#File
 - [x] watch command
 - [x] output/rank tests that take the longest
+- [ ] Allow multiple arguments `og TestA TestB` `og ./test/clean ./test/testify`
 - [ ] Allow configurable text templates, buffered, non-buffered
 - [ ] Flags
   - [ ] Disable Skip output
