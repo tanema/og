@@ -12,6 +12,17 @@ import (
 	"github.com/tanema/og/lib/stopwatch"
 )
 
+type Action string
+
+const (
+	Pass     Action = "pass"
+	Fail     Action = "fail"
+	Skip     Action = "skip"
+	Continue Action = "cont"
+	Pause    Action = "pause"
+	Output   Action = "output"
+)
+
 type (
 	// Summary Captures to status of tests
 	Summary struct {
@@ -34,7 +45,7 @@ type (
 		Names       []string
 		Packages    map[string]*Package
 		TotalTests  int
-		State       string
+		State       Action
 		Failures    map[string][]Failure
 		Skips       map[string][]string
 		BuildErrors []string
@@ -47,7 +58,7 @@ type (
 		Name        string
 		Names       []string
 		Results     map[string]*Test
-		State       string
+		State       Action
 		Cached      bool
 		TimeElapsed time.Duration
 		watch       *stopwatch.Stopwatch
@@ -55,7 +66,7 @@ type (
 	// Test is the results for a single test
 	Test struct {
 		Name        string
-		State       string
+		State       Action
 		Package     string
 		Messages    []string
 		TimeElapsed time.Duration
@@ -64,7 +75,7 @@ type (
 	logLine struct {
 		Package string
 		Test    string
-		Action  string
+		Action  Action
 		Output  string
 	}
 )
@@ -72,6 +83,7 @@ type (
 // New creates a new result set
 func New(mod string) *Set {
 	return &Set{
+		State:       Pass,
 		Mod:         mod,
 		watch:       stopwatch.Start(),
 		Packages:    map[string]*Package{},
@@ -94,7 +106,7 @@ func (res *Set) Parse(r io.Reader, decor func(*Set, *Package, *Test)) {
 				continue
 			}
 		}
-		pkg, test := res.Add(line.Package, line.Test, line.Action, line.Output)
+		pkg, test := res.Add(line.Action, line.Package, line.Test, line.Output)
 		decor(res, pkg, test)
 	}
 	res.TimeElapsed = res.watch.Stop()
@@ -115,7 +127,7 @@ func (res *Set) consumeBuildError(scanner *bufio.Scanner) {
 }
 
 // Add adds an event line to the result set
-func (res *Set) Add(pkgName, testName, action, output string) (*Package, *Test) {
+func (res *Set) Add(action Action, pkgName, testName, output string) (*Package, *Test) {
 	packageName := strings.ReplaceAll(pkgName, res.Mod, ".")
 	if _, ok := res.Packages[packageName]; !ok {
 		res.Names = append(res.Names, packageName)
@@ -138,45 +150,46 @@ func (res *Set) Add(pkgName, testName, action, output string) (*Package, *Test) 
 		}
 	}
 	if testName == "" {
-		return res.packageResult(pkg, action, output), nil
+		return res.packageResult(action, pkg, output), nil
 	}
-	return nil, res.testResult(pkg, pkg.Results[testName], action, output)
+	return nil, res.testResult(action, pkg, pkg.Results[testName], output)
 }
 
-func (res *Set) packageResult(pkg *Package, action, output string) *Package {
+func (res *Set) packageResult(action Action, pkg *Package, output string) *Package {
 	switch action {
-	case "pass":
+	case Pass:
 		res.PkgSummary.Pass++
-	case "fail":
+	case Fail:
+		res.State = Fail
 		res.PkgSummary.Fail++
-	case "skip":
+	case Skip:
 		res.PkgSummary.Skip++
-	case "pause":
+	case Pause:
 		pkg.TimeElapsed = pkg.watch.Pause()
-	case "cont":
+	case Continue:
 		pkg.watch.Resume()
-	case "output":
+	case Output:
 		if strings.HasPrefix(output, "ok") && strings.Contains(output, "(cached)") {
 			res.Cached++
 			pkg.Cached = true
 		}
 	}
-	if action != "output" {
+	if action != Output {
 		pkg.State = action
 	}
-	if action == "pass" || action == "fail" || action == "skip" {
+	if action == Pass || action == Fail || action == Skip {
 		pkg.TimeElapsed = pkg.watch.Stop()
 		return pkg
 	}
 	return nil
 }
 
-func (res *Set) testResult(pkg *Package, test *Test, action, output string) *Test {
+func (res *Set) testResult(action Action, pkg *Package, test *Test, output string) *Test {
 	switch action {
-	case "pass":
+	case Pass:
 		pkg.Pass++
 		res.TestSummary.Pass++
-	case "fail":
+	case Fail:
 		pkg.Fail++
 		res.TestSummary.Fail++
 		if len(test.Messages) > 0 {
@@ -186,25 +199,25 @@ func (res *Set) testResult(pkg *Package, test *Test, action, output string) *Tes
 				Messages: test.Messages,
 			})
 		}
-	case "skip":
+	case Skip:
 		pkg.Skip++
 		res.TestSummary.Skip++
 		res.Skips[pkg.Name] = append(res.Skips[pkg.Name], test.Name)
-	case "pause":
+	case Pause:
 		test.TimeElapsed = test.watch.Pause()
-	case "cont":
+	case Continue:
 		test.watch.Resume()
-	case "output":
+	case Output:
 		if !strings.Contains(output, "CONT") && !strings.Contains(output, "PAUSE") {
 			if msg := cleanMsg(test.Name, output); msg != "" {
 				test.Messages = append(test.Messages, msg)
 			}
 		}
 	}
-	if action != "output" {
+	if action != Output {
 		test.State = action
 	}
-	if action == "pass" || action == "fail" || action == "skip" {
+	if action == Pass || action == Fail || action == Skip {
 		test.TimeElapsed = test.watch.Stop()
 		return test
 	}

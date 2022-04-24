@@ -16,11 +16,13 @@ import (
 	"github.com/tanema/og/lib/find"
 	"github.com/tanema/og/lib/mod"
 	"github.com/tanema/og/lib/results"
+	"github.com/tanema/og/lib/watcher"
 )
 
 var (
 	filepathPattern = regexp.MustCompile(`^([.*/\.^:]*[^:]*):*(.+)*`)
 	displayFlag     string
+	watchFlag       bool
 )
 
 var rootCmd = &cobra.Command{
@@ -31,47 +33,61 @@ A common solution to this is syntax highlighting. It makes it easy to scan
 and notice what exactly is wrong at a glance. og is a tool to run go commands
 with color.`,
 	Run: func(cmd *cobra.Command, args []string) {
-		deco, ok := display.Decorators[displayFlag]
-		if !ok {
+		if _, ok := display.Decorators[displayFlag]; !ok {
 			cobra.CheckErr(fmt.Errorf("Unknown display type %v", displayFlag))
 		}
-
 		path, testArgs, err := parseArgs(args)
 		cobra.CheckErr(err)
-
 		module, err := mod.Get(path)
-		cobra.CheckErr(err)
+		var modName string
 		if err != nil {
-			path, _ = filepath.Abs(path)
+			modName, _ = filepath.Abs(path)
 		} else {
-			path = module.Mod.Path
+			modName = module.Mod.Path
 		}
-
-		r, w := io.Pipe()
-		defer r.Close()
-
-		res := results.New(path)
-		var wg sync.WaitGroup
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			res.Parse(r, deco(os.Stdout).Render)
-		}()
-		runCommand(w, testArgs)
-
-		w.Close()
-		wg.Wait()
-		display.Summary(os.Stdout, res)
+		cobra.CheckErr(test(modName, testArgs))
+		if watchFlag {
+			notifier, err := watcher.New(path)
+			cobra.CheckErr(err)
+			notifier.Watch(func(path string) {
+				test(modName, []string{filepath.Dir(path)})
+			})
+		}
 	},
 }
 
 func init() {
-	rootCmd.Flags().StringVarP(&displayFlag, "display", "d", "dots", "change the display of the test outputs [dots, pdots, name, pname]")
+	rootCmd.Flags().StringVarP(&displayFlag, "display", "d", "dots", "change the display of the test outputs [dots, pdots, names, pnames]")
+	rootCmd.Flags().BoolVarP(&watchFlag, "watch", "w", false, "watch for file changes and re-run tests")
 }
 
 // Execute is the main entry into the cli
 func Execute() {
 	rootCmd.Execute()
+}
+
+func test(modName string, args []string) error {
+	r, w := io.Pipe()
+	var wg sync.WaitGroup
+	go process(modName, &wg, r)
+	runCommand(w, args)
+	if err := r.Close(); err != nil {
+		return err
+	}
+	if err := w.Close(); err != nil {
+		return err
+	}
+	wg.Wait()
+	return nil
+}
+
+func process(modName string, wg *sync.WaitGroup, r io.Reader) {
+	deco := display.Decorators[displayFlag](os.Stdout)
+	res := results.New(modName)
+	wg.Add(1)
+	defer wg.Done()
+	res.Parse(r, deco.Render)
+	deco.Summary(res)
 }
 
 func parseArgs(args []string) (string, []string, error) {
@@ -100,10 +116,10 @@ func parseArgs(args []string) (string, []string, error) {
 	return "./", args, fmt.Errorf("i have no idea what you are telling me to do")
 }
 
-func runCommand(w io.Writer, args []string) {
+func runCommand(w io.Writer, args []string) error {
 	cmd := exec.Command("go", append([]string{"test", "-json", "-v"}, args...)...)
 	cmd.Stderr = w
 	cmd.Stdout = w
 	cmd.Env = os.Environ()
-	cmd.Run()
+	return cmd.Run()
 }

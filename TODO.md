@@ -15,10 +15,17 @@
 - [x] Output Elapsed times
     - [x] package elsapsed (from output)
     - [x] test elapsed will have to time ourselves. Start on run, pause, cont, done. Then sum
-    - [ ] output/rank tests that take the longest
 - [x] Relative filenames (remove package name) https://pkg.go.dev/golang.org/x/mod/modfile#File
+- [x] watch command
+- [ ] output/rank tests that take the longest
 - [ ] Allow configurable text templates, buffered, non-buffered
-- [ ] watch command
+- [ ] Flags
+  - [ ] Disable Skip output
+  - [ ] Disable elapsed
+  - [ ] Disable summary
+  - [ ] Run all on pass for watch
+  - [ ] show no test packages
+- [ ] .config/og global config for display
 - [ ] support go test flags
 - [ ] output json format maybe ?
 - [ ] install test deps if an error happens

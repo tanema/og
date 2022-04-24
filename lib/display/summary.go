@@ -1,17 +1,16 @@
 package display
 
 import (
-	"io"
 	"strings"
 
 	"github.com/tanema/og/lib/results"
 	"github.com/tanema/og/lib/term"
 )
 
-const summaryTemplate = `{{- if gt (len .BuildErrors) 0}}{{"Build Errors"| magenta | bold}}:
-{{- range .BuildErrors}}
-  {{. | magenta}}
-{{- end}}{{- end -}}
+const summaryTemplate = `
+{{if gt (len .BuildErrors) 0}}{{"Build Errors"| magenta | bold}}:
+{{range .BuildErrors}} {{. | magenta}}
+{{end -}}{{- end -}}
 {{- if gt (len .Failures) 0}}{{"Failed Tests"| red | bold}}:
 {{range $pkg, $fails := .Failures }}{{"●" | bold}} {{ $pkg | bold }}
 {{range $fails}}  {{.Name | bold}}:
@@ -27,11 +26,9 @@ const summaryTemplate = `{{- if gt (len .BuildErrors) 0}}{{"Build Errors"| magen
 {{"Elapsed" | bold}}: {{.TimeElapsed}}
 `
 
-// Summary will output the results of the test
-func Summary(w io.Writer, set *results.Set) {
+func formatForSummary(set *results.Set) {
 	formatBuildErrors(set)
 	formatFailures(set)
-	term.Fprintf(w, summaryTemplate, set)
 }
 
 func formatBuildErrors(set *results.Set) {
