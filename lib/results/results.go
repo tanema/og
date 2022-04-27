@@ -43,7 +43,6 @@ type (
 		PkgSummary  Summary
 		Mod         string
 		Cached      int
-		Names       []string
 		Packages    map[string]*Package
 		TotalTests  int
 		State       Action
@@ -57,7 +56,6 @@ type (
 	Package struct {
 		Summary
 		Name        string
-		Names       []string
 		Results     map[string]*Test
 		State       Action
 		Cached      bool
@@ -131,7 +129,6 @@ func (res *Set) consumeBuildError(scanner *bufio.Scanner) {
 func (res *Set) Add(action Action, pkgName, testName, output string) (*Package, *Test) {
 	packageName := strings.ReplaceAll(pkgName, res.Mod, ".")
 	if _, ok := res.Packages[packageName]; !ok {
-		res.Names = append(res.Names, packageName)
 		res.Packages[packageName] = &Package{
 			watch:   stopwatch.Start(),
 			Name:    packageName,
@@ -142,7 +139,6 @@ func (res *Set) Add(action Action, pkgName, testName, output string) (*Package, 
 	pkg := res.Packages[packageName]
 	if _, ok := pkg.Results[testName]; testName != "" && !ok {
 		res.TotalTests++
-		pkg.Names = append(pkg.Names, testName)
 		pkg.Results[testName] = &Test{
 			watch:   stopwatch.Start(),
 			Name:    testName,
@@ -236,17 +232,45 @@ func cleanMsg(testName, output string) string {
 	return strings.TrimSpace(msg)
 }
 
-func (res *Set) RankedTests() []*Test {
+func (res *Set) FilteredPackages(filterNone bool) map[string]*Package {
+	if filterNone {
+		return res.Packages
+	}
+	filtered := map[string]*Package{}
+	for name, pkg := range res.Packages {
+		if pkg.State != Skip {
+			filtered[name] = pkg
+		}
+	}
+	return filtered
+}
+
+func (pkg *Package) FilteredTests(filterSkip bool) map[string]*Test {
+	if filterSkip {
+		return pkg.Results
+	}
+	filtered := map[string]*Test{}
+	for name, test := range pkg.Results {
+		if test.State != Skip {
+			filtered[name] = test
+		}
+	}
+	return filtered
+}
+
+func (res *Set) RankedTests(threshold time.Duration) []*Test {
 	tests := []*Test{}
 	for _, pkg := range res.Packages {
 		for _, test := range pkg.Results {
-			tests = append(tests, test)
+			if test.TimeElapsed >= threshold {
+				tests = append(tests, test)
+			}
 		}
 	}
 	sort.Slice(tests, func(i, j int) bool {
 		return tests[i].TimeElapsed > tests[j].TimeElapsed
 	})
-	return tests[:10]
+	return tests
 }
 
 func (res *Set) String() string {

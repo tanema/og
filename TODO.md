@@ -18,17 +18,22 @@
 - [x] Relative filenames (remove package name) https://pkg.go.dev/golang.org/x/mod/modfile#File
 - [x] watch command
 - [x] output/rank tests that take the longest
-- [ ] Allow multiple arguments `og TestA TestB` `og ./test/clean ./test/testify`
-- [ ] Allow configurable text templates, buffered, non-buffered
-- [ ] Flags
-  - [ ] Disable Skip output
-  - [ ] Disable elapsed
-  - [ ] Disable summary
-  - [ ] Run all on pass for watch
-  - [ ] show no test packages
-  - [ ] Rank threshold or number
-- [ ] .config/og global config for display
+- [x] Allow multiple arguments `og TestA TestB` `og ./test/clean ./test/testify`
+    - [x] run all tests in a single file will require finding all tests in the file
+- [ ] Config
+  - [x] Flags
+    - [x] Disable Skip output
+    - [x] Disable elapsed
+    - [x] Disable summary
+    - [x] Show no test packages
+    - [x] Rank threshold or number
+  - [ ] .config/og global config for display
+    - [ ] Allow configurable text templates, buffered, non-buffered
+- [ ] Better syntax highlighting
+  - [ ] build error output still isnt quite right
+  - [ ] highlight all filenames with line numbers in cyan
+  - [ ] highlight actual in magenta
 - [ ] support go test flags
-- [ ] output json format maybe ?
+- [ ] output json format maybe?
 - [ ] install test deps if an error happens
 - [ ] build error excerpts?

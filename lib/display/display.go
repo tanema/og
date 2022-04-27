@@ -2,98 +2,106 @@ package display
 
 import (
 	"io"
+	"strings"
+	"time"
 
 	"github.com/tanema/og/lib/results"
 	"github.com/tanema/og/lib/term"
 )
 
 // Decorators are all of the decorator that are available
-var Decorators = map[string]func(io.Writer) Renderer{
-	"dots":   Dot,
-	"pdots":  PackageDot,
-	"names":  Name,
-	"pnames": PackageName,
+var Decorators = map[string]string{
+	"dots":   dotsTemplate,
+	"pdots":  dotsSeparateTemplate,
+	"names":  namesTemplate,
+	"pnames": namesPackageTemplate,
 }
 
 type (
-	// Renderer describes a object that can display result data
-	Renderer interface {
-		Render(set *results.Set, pkg *results.Package, test *results.Test)
-		Summary(set *results.Set)
+	// Cfg are the configurations for output
+	Cfg struct {
+		ResultsTemplate string `yaml:"results_template"`
+		SummaryTemplate string `yaml:"summary_template"`
+		HideSkip        bool   `yaml:"hide_skip"`
+		HideEmpty       bool   `yaml:"hide_empty"`
+		HideElapsed     bool   `yaml:"hide_elapsed"`
+		HideSummary     bool   `yaml:"hide_summary"`
+		Rank            time.Duration
 	}
-	// ScreenDisplay is the mechanism for displaying dot outputs with a screen buffer
-	// This is good for updating shorter outputs however outputs that are likely to
-	// go beyond the screen should print instead
-	ScreenDisplay struct {
-		out  io.Writer
-		sb   *term.ScreenBuf
-		tmpl string
+	// Renderer is the struct that does the display
+	Renderer struct {
+		sb  *term.ScreenBuf
+		cfg Cfg
 	}
-	// PrintDisplay is the mechanism for displaying output line by line rather
-	// than a display that refreshes
-	PrintDisplay struct {
-		out         io.Writer
-		packageTmpl string
-		testTmpl    string
+	renderData struct {
+		Set *results.Set
+		Cfg Cfg
 	}
 )
 
-// Dot will create a dot display for all tests as 1 line
-func Dot(w io.Writer) Renderer {
-	return &ScreenDisplay{
-		sb:   term.NewScreenBuf(w),
-		tmpl: dotsTemplate,
-	}
-}
-
-// PackageDot will display as dots with each of the packages
-func PackageDot(w io.Writer) Renderer {
-	return &ScreenDisplay{
-		out:  w,
-		sb:   term.NewScreenBuf(w),
-		tmpl: dotsSeparateTemplate,
-	}
-}
-
-// Name will display package names
-func Name(w io.Writer) Renderer {
-	return &PrintDisplay{
-		out:         w,
-		packageTmpl: namesSinglePackageTemplate,
-		testTmpl:    namesSingleTestTemplate,
-	}
-}
-
-// PackageName will display package names
-func PackageName(w io.Writer) Renderer {
-	return &ScreenDisplay{
-		sb:   term.NewScreenBuf(w),
-		tmpl: namesPackageTemplate,
+// New will create a new display
+func New(w io.Writer, cfg Cfg) *Renderer {
+	return &Renderer{
+		sb:  term.NewScreenBuf(w),
+		cfg: cfg,
 	}
 }
 
 // Render will render the display of the tests
-func (screen *ScreenDisplay) Render(set *results.Set, pkg *results.Package, test *results.Test) {
-	screen.sb.Render(screen.tmpl, set)
+func (render *Renderer) Render(set *results.Set, pkg *results.Package, test *results.Test) {
+	render.sb.Render(render.cfg.ResultsTemplate, renderData{set, render.cfg})
 }
 
 // Summary will re-render and add on the summary
-func (screen *ScreenDisplay) Summary(set *results.Set) {
-	formatForSummary(set)
-	screen.sb.Render(screen.tmpl+summaryTemplate, set)
+func (render *Renderer) Summary(set *results.Set) {
+	formatBuildErrors(set)
+	formatFailures(set)
+	render.sb.Render(render.cfg.ResultsTemplate+render.cfg.SummaryTemplate, renderData{set, render.cfg})
 }
 
-// Render will render the display of the tests
-func (prin *PrintDisplay) Render(set *results.Set, pkg *results.Package, test *results.Test) {
-	if pkg != nil {
-		term.Fprintf(prin.out, prin.packageTmpl, pkg)
-	} else if test != nil {
-		term.Fprintf(prin.out, prin.testTmpl, test)
+func formatBuildErrors(set *results.Set) {
+	for i, msg := range set.BuildErrors {
+		if strings.Contains(msg, "have (") {
+			set.BuildErrors[i] = term.Sprintf("{{. | red}}", msg)
+		} else if strings.Contains(msg, "want (") {
+			set.BuildErrors[i] = term.Sprintf("{{. | green}}", msg)
+		}
 	}
 }
 
-// Summary will add on the summary
-func (prin *PrintDisplay) Summary(set *results.Set) {
-	formatForSummary(set)
-	term.Fprintf(prin.out, summaryTemplate, set)
+func formatFailures(set *results.Set) {
+	for pkg, fails := range set.Failures {
+		for i, fail := range fails {
+			finalMessages := []string{}
+			for j := 0; j < len(fail.Messages); j++ {
+				msg := set.Failures[pkg][i].Messages[j]
+				if msg == "--- Expected" || msg == "+++ Actual" {
+					continue
+				} else if strings.HasPrefix(msg, "expected:") || strings.Contains(msg, "Want:") {
+					finalMessages = append(finalMessages, term.Sprintf(`{{. | green}}`, msg))
+				} else if strings.HasPrefix(msg, "(testify.compStruct) {") {
+					finalMessages = append(finalMessages, term.Sprintf(`{{"{" | green}}`, msg))
+					j++
+					for ; ; j++ {
+						msg = set.Failures[pkg][i].Messages[j]
+						if strings.HasPrefix(msg, "+ ") {
+							msg = strings.TrimPrefix(msg, "+ ")
+							finalMessages = append(finalMessages, term.Sprintf("  {{. | red}}", msg))
+						} else if msg == "}" {
+							finalMessages = append(finalMessages, term.Sprintf("{{. | green}}", msg))
+							break
+						} else {
+							msg = strings.TrimPrefix(msg, "- ")
+							finalMessages = append(finalMessages, term.Sprintf("  {{. | green}}", msg))
+						}
+					}
+				} else if strings.HasPrefix(msg, "@@") {
+					finalMessages = append(finalMessages, term.Sprintf("{{. | cyan}}", msg))
+				} else {
+					finalMessages = append(finalMessages, term.Sprintf("{{. | red}}", msg))
+				}
+			}
+			set.Failures[pkg][i].Messages = finalMessages
+		}
+	}
 }

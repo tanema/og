@@ -9,35 +9,37 @@ import (
 )
 
 type Watcher struct {
-	path   string
 	events *fsnotify.Watcher
 }
 
-func New(path string) (*Watcher, error) {
-	path, _ = filepath.Abs(strings.TrimSuffix(path, "/..."))
+func New(paths ...string) (*Watcher, error) {
 	fsntfy, err := fsnotify.NewWatcher()
 	if err != nil {
 		return nil, err
 	}
 
 	watcher := &Watcher{
-		path:   path,
 		events: fsntfy,
 	}
 
-	err = filepath.Walk(path, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-		if info.IsDir() || strings.HasSuffix(path, ".go") {
-			if err := watcher.events.Add(path); err != nil {
+	for _, path := range paths {
+		path, _ = filepath.Abs(strings.TrimSuffix(path, "/..."))
+		if err = filepath.Walk(path, func(path string, info os.FileInfo, err error) error {
+			if err != nil {
 				return err
 			}
+			if info.IsDir() || strings.HasSuffix(path, ".go") {
+				if err := watcher.events.Add(path); err != nil {
+					return err
+				}
+			}
+			return nil
+		}); err != nil {
+			return nil, err
 		}
-		return nil
-	})
+	}
 
-	return watcher, err
+	return watcher, nil
 }
 
 func (watcher *Watcher) Stop() {
