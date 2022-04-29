@@ -8,8 +8,7 @@ const (
 {{- if gt (len .Set.Failures) 0}}{{"Failed Tests"| red | bold}}:
 {{range $pkg, $fails := .Set.Failures }}{{"●" | bold}} {{ $pkg | bold }}
 {{range $fails}}  {{.Name | bold}}:
-{{range .Messages}}    {{.}}
-{{end}}{{- end}}{{end}}{{- end -}}
+{{range .Messages}}{{.}}{{end}}{{- end}}{{end}}{{- end -}}
 {{- if gt (len .Set.Skips) 0}}{{- "Skipped Tests"| yellow | bold}}:
 {{range $pkg, $skips := .Set.Skips }}{{"●" | bold}} {{ $pkg | bold }}
 {{range $skips}}  {{. | yellow}}
@@ -18,8 +17,8 @@ const (
 {{- "Tests" | bold}}: Pass: {{.Set.TestSummary.Pass | green}}{{if not .Cfg.HideSkip}} Skip: {{.Set.TestSummary.Skip | blue}}{{end}} Fail: {{.Set.TestSummary.Fail | red}} Total: {{.Set.TotalTests | bold}}
 {{"Packages"| bold}}: Pass: {{.Set.PkgSummary.Pass | green}}{{if not .Cfg.HideEmpty}} NoTests: {{.Set.PkgSummary.Skip | blue}}{{end}} Fail: {{.Set.PkgSummary.Fail | red}} Cached: {{.Set.Cached | green}} Total: {{len .Set.Packages | bold}}{{end}}{{if not .Cfg.HideElapsed}}
 {{"Elapsed" | bold}}: {{.Set.TimeElapsed | cyan}}{{end}}
-{{if gt .Cfg.Rank 0}}{{"Ranked Tests:" | bold}}
-{{range (.Set.RankedTests .Cfg.Rank)}}{{.TimeElapsed | cyan}} {{.Package}} {{.Name}}
+{{if and (gt .Cfg.Threshold 0) (gt (len (.Set.RankedTests .Cfg.Threshold)) 0)}}{{"Slow Tests:" | bold}}
+{{range (.Set.RankedTests .Cfg.Threshold)}}{{.TimeElapsed | cyan}} {{.Package}} {{.Name}}
 {{end}}{{end}}`
 
 	dotsTemplate = `{{range $pkgname, $pkg := (.Set.FilteredPackages (not $.Cfg.HideEmpty)) -}}

@@ -20,20 +20,37 @@
 - [x] output/rank tests that take the longest
 - [x] Allow multiple arguments `og TestA TestB` `og ./test/clean ./test/testify`
     - [x] run all tests in a single file will require finding all tests in the file
-- [ ] Config
+- [x] support go test flags
+  - [x] --nocache (-count=1)
+  - [x] -count
+  - [x] -parallel
+  - [x] -short
+  - [x] -vet=all
+  - [x] -race
+  - [x] -covermode atomic -coverprofile profile.out
+  - [x] -failfast
+  - [x] -shuffle=on
+- [x] fix watch
+- [x] Config
   - [x] Flags
     - [x] Disable Skip output
     - [x] Disable elapsed
     - [x] Disable summary
     - [x] Show no test packages
     - [x] Rank threshold or number
-  - [ ] .config/og global config for display
-    - [ ] Allow configurable text templates, buffered, non-buffered
+  - [x] .config/og global config for display
+    - [x] Allow configurable text templates, buffered, non-buffered
+- [ ] Test
+- [ ] outputs
+  - [ ] all logging/display to stderr
+  - [ ] watch timestamp improvement
+  - [ ] json
 - [ ] Better syntax highlighting
+  - [ ] can I parse build errors?
   - [ ] build error output still isnt quite right
+      - panic in tests is not captured. Writing to nil buf
   - [ ] highlight all filenames with line numbers in cyan
   - [ ] highlight actual in magenta
-- [ ] support go test flags
-- [ ] output json format maybe?
+  - [ ] build error excerpts?
+  - [ ] go vet output support
 - [ ] install test deps if an error happens
-- [ ] build error excerpts?

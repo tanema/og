@@ -3,8 +3,8 @@ package display
 import (
 	"io"
 	"strings"
-	"time"
 
+	"github.com/tanema/og/lib/config"
 	"github.com/tanema/og/lib/results"
 	"github.com/tanema/og/lib/term"
 )
@@ -18,29 +18,19 @@ var Decorators = map[string]string{
 }
 
 type (
-	// Cfg are the configurations for output
-	Cfg struct {
-		ResultsTemplate string `yaml:"results_template"`
-		SummaryTemplate string `yaml:"summary_template"`
-		HideSkip        bool   `yaml:"hide_skip"`
-		HideEmpty       bool   `yaml:"hide_empty"`
-		HideElapsed     bool   `yaml:"hide_elapsed"`
-		HideSummary     bool   `yaml:"hide_summary"`
-		Rank            time.Duration
-	}
 	// Renderer is the struct that does the display
 	Renderer struct {
 		sb  *term.ScreenBuf
-		cfg Cfg
+		cfg *config.Config
 	}
 	renderData struct {
 		Set *results.Set
-		Cfg Cfg
+		Cfg *config.Config
 	}
 )
 
 // New will create a new display
-func New(w io.Writer, cfg Cfg) *Renderer {
+func New(w io.Writer, cfg *config.Config) *Renderer {
 	return &Renderer{
 		sb:  term.NewScreenBuf(w),
 		cfg: cfg,
@@ -75,9 +65,9 @@ func formatFailures(set *results.Set) {
 			finalMessages := []string{}
 			for j := 0; j < len(fail.Messages); j++ {
 				msg := set.Failures[pkg][i].Messages[j]
-				if msg == "--- Expected" || msg == "+++ Actual" {
+				if strings.Contains(msg, "--- Expected") || strings.Contains(msg, "+++ Actual") {
 					continue
-				} else if strings.HasPrefix(msg, "expected:") || strings.Contains(msg, "Want:") {
+				} else if strings.Contains(msg, "expected:") || strings.Contains(msg, "Want:") {
 					finalMessages = append(finalMessages, term.Sprintf(`{{. | green}}`, msg))
 				} else if strings.HasPrefix(msg, "(testify.compStruct) {") {
 					finalMessages = append(finalMessages, term.Sprintf(`{{"{" | green}}`, msg))
@@ -95,7 +85,7 @@ func formatFailures(set *results.Set) {
 							finalMessages = append(finalMessages, term.Sprintf("  {{. | green}}", msg))
 						}
 					}
-				} else if strings.HasPrefix(msg, "@@") {
+				} else if strings.Contains(msg, "@@ ") {
 					finalMessages = append(finalMessages, term.Sprintf("{{. | cyan}}", msg))
 				} else {
 					finalMessages = append(finalMessages, term.Sprintf("{{. | red}}", msg))

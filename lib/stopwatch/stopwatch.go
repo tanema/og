@@ -25,6 +25,11 @@ func (watch *Stopwatch) Pause() time.Duration {
 	return watch.total
 }
 
+// Paused returns if the watch is paused
+func (watch *Stopwatch) Paused() bool {
+	return watch.paused
+}
+
 // Resume will restart the stopwatch if paused
 func (watch *Stopwatch) Resume() {
 	if !watch.paused {

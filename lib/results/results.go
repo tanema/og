@@ -1,10 +1,7 @@
 package results
 
 import (
-	"bufio"
 	"encoding/json"
-	"fmt"
-	"io"
 	"regexp"
 	"sort"
 	"strings"
@@ -16,6 +13,7 @@ import (
 type Action string
 
 const (
+	Run      Action = "run"
 	Pass     Action = "pass"
 	Fail     Action = "fail"
 	Skip     Action = "skip"
@@ -94,35 +92,18 @@ func New(mod string) *Set {
 
 // Parse will parse a reader line by line, adding the lines to the result set.
 // decor is a callback that can be used for displaying results
-func (res *Set) Parse(r io.Reader, decor func(*Set, *Package, *Test)) {
-	scanner := bufio.NewScanner(r)
-	scanner.Split(bufio.ScanLines)
-	for scanner.Scan() {
-		line := &logLine{}
-		if err := json.Unmarshal(scanner.Bytes(), &line); err != nil {
-			res.consumeBuildError(scanner)
-			if err := json.Unmarshal(scanner.Bytes(), &line); err != nil {
-				continue
-			}
-		}
-		pkg, test := res.Add(line.Action, line.Package, line.Test, line.Output)
-		decor(res, pkg, test)
+func (res *Set) Parse(data []byte) (*Package, *Test) {
+	line := &logLine{}
+	if err := json.Unmarshal(data, &line); err == nil {
+		return res.Add(line.Action, line.Package, line.Test, line.Output)
 	}
-	res.TimeElapsed = res.watch.Stop()
+	res.BuildErrors = append(res.BuildErrors, string(data))
+	return nil, nil
 }
 
-func (res *Set) consumeBuildError(scanner *bufio.Scanner) {
-	if strings.HasPrefix(scanner.Text(), "FAIL") {
-		scanner.Scan() // skip build fail final line
-		return
-	}
-	for scanner.Scan() {
-		out := scanner.Text()
-		if strings.HasPrefix(out, "{") {
-			break
-		}
-		res.BuildErrors = append(res.BuildErrors, out)
-	}
+// Complete will mark the set as finished
+func (res *Set) Complete() {
+	res.TimeElapsed = res.watch.Stop()
 }
 
 // Add adds an event line to the result set
@@ -132,7 +113,7 @@ func (res *Set) Add(action Action, pkgName, testName, output string) (*Package, 
 		res.Packages[packageName] = &Package{
 			watch:   stopwatch.Start(),
 			Name:    packageName,
-			State:   "run",
+			State:   Run,
 			Results: map[string]*Test{},
 		}
 	}
@@ -142,7 +123,7 @@ func (res *Set) Add(action Action, pkgName, testName, output string) (*Package, 
 		pkg.Results[testName] = &Test{
 			watch:   stopwatch.Start(),
 			Name:    testName,
-			State:   "run",
+			State:   Run,
 			Package: pkg.Name,
 		}
 	}
@@ -205,11 +186,7 @@ func (res *Set) testResult(action Action, pkg *Package, test *Test, output strin
 	case Continue:
 		test.watch.Resume()
 	case Output:
-		if !strings.Contains(output, "CONT") && !strings.Contains(output, "PAUSE") {
-			if msg := cleanMsg(test.Name, output); msg != "" {
-				test.Messages = append(test.Messages, msg)
-			}
-		}
+		test.Messages = append(test.Messages, output)
 	}
 	if action != Output {
 		test.State = action
@@ -221,17 +198,22 @@ func (res *Set) testResult(action Action, pkg *Package, test *Test, output strin
 	return nil
 }
 
-func cleanMsg(testName, output string) string {
-	msg := strings.ReplaceAll(output, testName, "")
-	msg = strings.TrimSpace(msg)
-	msg = regexp.MustCompile(`^[=-]{3}\s(RUN|FAIL|PASS|SKIP):?\s*`).ReplaceAllString(msg, "")
-	msg = regexp.MustCompile(`\(.*\)$`).ReplaceAllString(msg, "")
-	if msg == "Test:" {
-		return ""
+func (test *Test) AddMessage(output string) {
+	if strings.Contains(output, "CONT") || strings.Contains(output, "PAUSE") {
+		return
 	}
-	return strings.TrimSpace(msg)
+	msg := strings.ReplaceAll(output, test.Name, "")
+	msg = strings.TrimRightFunc(msg, func(r rune) bool { return r == ' ' || r == '\n' })
+	msg = regexp.MustCompile(`[=-]{3}\s(RUN|FAIL|PASS|SKIP):?\s*`).ReplaceAllString(msg, "")
+	msg = strings.TrimPrefix(msg, "FAIL")
+	msg = regexp.MustCompile(`\(.*\)$`).ReplaceAllString(msg, "")
+	if strings.TrimSpace(msg) == "Test:" || strings.TrimSpace(msg) == "" {
+		return
+	}
+	test.Messages = append(test.Messages, msg)
 }
 
+// FilteredPackages returns the packages that have tests.
 func (res *Set) FilteredPackages(filterNone bool) map[string]*Package {
 	if filterNone {
 		return res.Packages
@@ -245,6 +227,7 @@ func (res *Set) FilteredPackages(filterNone bool) map[string]*Package {
 	return filtered
 }
 
+// FilteredTests filters out skipped tests.
 func (pkg *Package) FilteredTests(filterSkip bool) map[string]*Test {
 	if filterSkip {
 		return pkg.Results
@@ -258,6 +241,7 @@ func (pkg *Package) FilteredTests(filterSkip bool) map[string]*Test {
 	return filtered
 }
 
+// RankedTests returns tests that are slower than the threshold and ranks them.
 func (res *Set) RankedTests(threshold time.Duration) []*Test {
 	tests := []*Test{}
 	for _, pkg := range res.Packages {
@@ -271,15 +255,4 @@ func (res *Set) RankedTests(threshold time.Duration) []*Test {
 		return tests[i].TimeElapsed > tests[j].TimeElapsed
 	})
 	return tests
-}
-
-func (res *Set) String() string {
-	var sb strings.Builder
-	for name, pkg := range res.Packages {
-		sb.WriteString(fmt.Sprintf("Package: %v\n", name))
-		for name, test := range pkg.Results {
-			sb.WriteString(fmt.Sprintf("\t%v: %v\n", name, test.State))
-		}
-	}
-	return sb.String()
 }
