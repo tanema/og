@@ -29,12 +29,13 @@ type Config struct {
 	Threshold       time.Duration `json:"threshold"`
 	Watch           bool
 	NoCache         bool
-	Parallel        bool
 	Short           bool
 	Vet             bool
 	Race            bool
 	FailFast        bool
 	Shuffle         bool
+	Raw             bool
+	Dump            bool
 	Cover           string
 }
 
@@ -72,12 +73,12 @@ func (config *Config) findRoot() {
 
 // Args formats go test args for use on the command
 func (config *Config) Args() []string {
-	testArgs := []string{}
+	testArgs := []string{"go", "test"}
+	if !config.Raw {
+		testArgs = append(testArgs, "-json", "-v")
+	}
 	if config.NoCache {
 		testArgs = append(testArgs, "-count=1")
-	}
-	if config.Parallel {
-		testArgs = append(testArgs, "-parallel")
 	}
 	if config.Short {
 		testArgs = append(testArgs, "-short")

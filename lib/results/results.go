@@ -2,14 +2,15 @@ package results
 
 import (
 	"encoding/json"
-	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/tanema/og/lib/stopwatch"
 )
 
+// Action is the states of the tests
 type Action string
 
 const (
@@ -23,51 +24,39 @@ const (
 )
 
 type (
-	// Summary Captures to status of tests
+	// Summary Captuset to status of tests
 	Summary struct {
-		Pass int
-		Fail int
-		Skip int
-	}
-	// Failure is a single test failure message
-	Failure struct {
-		Name     string
-		Package  string
-		Messages []string
+		Pass int `json:"pass"`
+		Fail int `json:"fail"`
+		Skip int `json:"skip"`
 	}
 	// Set is the complete test results for all packages
 	Set struct {
-		TestSummary Summary
-		PkgSummary  Summary
-		Mod         string
-		Cached      int
-		Packages    map[string]*Package
-		TotalTests  int
-		State       Action
-		Failures    map[string][]Failure
-		Skips       map[string][]string
-		BuildErrors []string
-		TimeElapsed time.Duration
+		TestSummary Summary             `json:"test_summary"`
+		PkgSummary  Summary             `json:"pkg_summary"`
+		Mod         string              `json:"mod"`
+		Root        string              `json:"root"`
+		Cached      int                 `json:"cached"`
+		Packages    map[string]*Package `json:"packages"`
+		TotalTests  int                 `json:"total_tests"`
+		State       Action              `json:"state"`
+		BuildErrors []*BuildError       `json:"build_errors,omitempty"`
+		TimeElapsed time.Duration       `json:"time_elapsed"`
 		watch       *stopwatch.Stopwatch
 	}
-	// Package is the test results for a single package
-	Package struct {
-		Summary
-		Name        string
-		Results     map[string]*Test
-		State       Action
-		Cached      bool
-		TimeElapsed time.Duration
-		watch       *stopwatch.Stopwatch
+	// BuildError captures a single build error in a package
+	BuildError struct {
+		Package string            `json:"package"`
+		Lines   []*BuildErrorLine `json:"lines"`
 	}
-	// Test is the results for a single test
-	Test struct {
-		Name        string
-		State       Action
-		Package     string
-		Messages    []string
-		TimeElapsed time.Duration
-		watch       *stopwatch.Stopwatch
+	// BuildErrorLine is part of the build error trace
+	BuildErrorLine struct {
+		Path    string `json:"path"`
+		Line    int    `json:"line"`
+		Column  int    `json:"column"`
+		Have    string `json:"have"`
+		Want    string `json:"want"`
+		Message string `json:"message"`
 	}
 	logLine struct {
 		Package string
@@ -77,149 +66,137 @@ type (
 	}
 )
 
-// New creates a new result set
-func New(mod string) *Set {
+// New creates a new setult set
+func New(mod, root string) *Set {
 	return &Set{
 		State:       Pass,
 		Mod:         mod,
+		Root:        root,
 		watch:       stopwatch.Start(),
 		Packages:    map[string]*Package{},
-		Failures:    map[string][]Failure{},
-		Skips:       map[string][]string{},
-		BuildErrors: []string{},
+		BuildErrors: []*BuildError{},
 	}
 }
 
-// Parse will parse a reader line by line, adding the lines to the result set.
+// Parse will parse a reader line by line, adding the lines to the setult set.
 // decor is a callback that can be used for displaying results
-func (res *Set) Parse(data []byte) (*Package, *Test) {
+func (set *Set) Parse(data []byte) {
 	line := &logLine{}
 	if err := json.Unmarshal(data, &line); err == nil {
-		return res.Add(line.Action, line.Package, line.Test, line.Output)
+		set.Add(line.Action, line.Package, line.Test, line.Output)
+	} else {
+		set.parseBuildError(string(data))
 	}
-	res.BuildErrors = append(res.BuildErrors, string(data))
-	return nil, nil
 }
 
 // Complete will mark the set as finished
-func (res *Set) Complete() {
-	res.TimeElapsed = res.watch.Stop()
-}
-
-// Add adds an event line to the result set
-func (res *Set) Add(action Action, pkgName, testName, output string) (*Package, *Test) {
-	packageName := strings.ReplaceAll(pkgName, res.Mod, ".")
-	if _, ok := res.Packages[packageName]; !ok {
-		res.Packages[packageName] = &Package{
-			watch:   stopwatch.Start(),
-			Name:    packageName,
-			State:   Run,
-			Results: map[string]*Test{},
+func (set *Set) Complete() {
+	set.TimeElapsed = set.watch.Stop()
+	for _, pkg := range set.Packages {
+		for _, test := range pkg.Tests {
+			if test.State == Fail {
+				for _, fail := range test.Failures {
+					fail.format()
+				}
+			}
 		}
 	}
-	pkg := res.Packages[packageName]
-	if _, ok := pkg.Results[testName]; testName != "" && !ok {
-		res.TotalTests++
-		pkg.Results[testName] = &Test{
-			watch:   stopwatch.Start(),
-			Name:    testName,
-			State:   Run,
-			Package: pkg.Name,
-		}
+}
+
+// Add adds an event line to the setult set
+func (set *Set) Add(action Action, pkgName, testName, output string) {
+	packageName := strings.ReplaceAll(pkgName, set.Mod+"/", "")
+	if packageName == "" {
+		packageName = "<root>"
+	}
+	if _, ok := set.Packages[packageName]; !ok {
+		set.Packages[packageName] = newPackage(packageName)
+	}
+	pkg := set.Packages[packageName]
+	if _, ok := pkg.Tests[testName]; testName != "" && !ok {
+		set.TotalTests++
+		pkg.Tests[testName] = newTest(pkg.Name, testName)
 	}
 	if testName == "" {
-		return res.packageResult(action, pkg, output), nil
+		pkg.result(set, action, output)
+	} else {
+		pkg.Tests[testName].result(set, pkg, action, output)
 	}
-	return nil, res.testResult(action, pkg, pkg.Results[testName], output)
 }
 
-func (res *Set) packageResult(action Action, pkg *Package, output string) *Package {
-	switch action {
-	case Pass:
-		res.PkgSummary.Pass++
-	case Fail:
-		res.State = Fail
-		res.PkgSummary.Fail++
-	case Skip:
-		res.PkgSummary.Skip++
-	case Pause:
-		pkg.TimeElapsed = pkg.watch.Pause()
-	case Continue:
-		pkg.watch.Resume()
-	case Output:
-		if strings.HasPrefix(output, "ok") && strings.Contains(output, "(cached)") {
-			res.Cached++
-			pkg.Cached = true
+func (set *Set) parseBuildError(data string) {
+	if strings.HasPrefix(data, "# ") {
+		pkg := strings.Split(data, " ")[1]
+		err := &BuildError{
+			Package: strings.TrimPrefix(pkg, set.Mod+"/"),
+			Lines:   []*BuildErrorLine{},
+		}
+		set.BuildErrors = append(set.BuildErrors, err)
+	} else if strings.HasPrefix(strings.TrimSpace(data), "have (") {
+		err := set.BuildErrors[len(set.BuildErrors)-1]
+		line := err.Lines[len(err.Lines)-1]
+		line.Have = strings.TrimSpace(strings.TrimPrefix(data, "have "))
+	} else if strings.HasPrefix(strings.TrimSpace(data), "want (") {
+		err := set.BuildErrors[len(set.BuildErrors)-1]
+		line := err.Lines[len(err.Lines)-1]
+		line.Want = strings.TrimSpace(strings.TrimPrefix(data, "want "))
+	} else if !strings.HasPrefix(data, "FAIL") {
+		err := set.BuildErrors[len(set.BuildErrors)-1]
+		parts := strings.Split(data, ":")
+		lineNum, _ := strconv.Atoi(parts[1])
+		colNum, _ := strconv.Atoi(parts[2])
+		err.Lines = append(err.Lines, &BuildErrorLine{
+			Path:    parts[0],
+			Line:    lineNum,
+			Column:  colNum,
+			Message: parts[3],
+		})
+	}
+}
+
+// Any will return if there are any tests at all
+func (set *Set) Any() bool {
+	return set.TotalTests > 0
+}
+
+// Failures will collect all the test failures across all packages into a single
+// collection
+func (set *Set) Failures() map[string]map[string][]*Failure {
+	failures := map[string]map[string][]*Failure{}
+	for _, pkg := range set.Packages {
+		for _, tst := range pkg.Tests {
+			if tst.State == Fail && len(tst.Failures) > 0 {
+				if _, ok := failures[pkg.Name]; !ok {
+					failures[pkg.Name] = map[string][]*Failure{}
+				}
+				failures[pkg.Name][tst.Name] = append(failures[pkg.Name][tst.Name], tst.Failures...)
+			}
 		}
 	}
-	if action != Output {
-		pkg.State = action
-	}
-	if action == Pass || action == Fail || action == Skip {
-		pkg.TimeElapsed = pkg.watch.Stop()
-		return pkg
-	}
-	return nil
+	return failures
 }
 
-func (res *Set) testResult(action Action, pkg *Package, test *Test, output string) *Test {
-	switch action {
-	case Pass:
-		pkg.Pass++
-		res.TestSummary.Pass++
-	case Fail:
-		pkg.Fail++
-		res.TestSummary.Fail++
-		if len(test.Messages) > 0 {
-			res.Failures[pkg.Name] = append(res.Failures[pkg.Name], Failure{
-				Name:     test.Name,
-				Package:  pkg.Name,
-				Messages: test.Messages,
-			})
+// Skips will collect all the skipped test names from all the packages into a
+// single collection
+func (set *Set) Skips() map[string][]string {
+	skips := map[string][]string{}
+	for _, pkg := range set.Packages {
+		for _, tst := range pkg.Tests {
+			if tst.State == Skip {
+				skips[pkg.Name] = append(skips[pkg.Name], tst.Name)
+			}
 		}
-	case Skip:
-		pkg.Skip++
-		res.TestSummary.Skip++
-		res.Skips[pkg.Name] = append(res.Skips[pkg.Name], test.Name)
-	case Pause:
-		test.TimeElapsed = test.watch.Pause()
-	case Continue:
-		test.watch.Resume()
-	case Output:
-		test.Messages = append(test.Messages, output)
 	}
-	if action != Output {
-		test.State = action
-	}
-	if action == Pass || action == Fail || action == Skip {
-		test.TimeElapsed = test.watch.Stop()
-		return test
-	}
-	return nil
-}
-
-func (test *Test) AddMessage(output string) {
-	if strings.Contains(output, "CONT") || strings.Contains(output, "PAUSE") {
-		return
-	}
-	msg := strings.ReplaceAll(output, test.Name, "")
-	msg = strings.TrimRightFunc(msg, func(r rune) bool { return r == ' ' || r == '\n' })
-	msg = regexp.MustCompile(`[=-]{3}\s(RUN|FAIL|PASS|SKIP):?\s*`).ReplaceAllString(msg, "")
-	msg = strings.TrimPrefix(msg, "FAIL")
-	msg = regexp.MustCompile(`\(.*\)$`).ReplaceAllString(msg, "")
-	if strings.TrimSpace(msg) == "Test:" || strings.TrimSpace(msg) == "" {
-		return
-	}
-	test.Messages = append(test.Messages, msg)
+	return skips
 }
 
 // FilteredPackages returns the packages that have tests.
-func (res *Set) FilteredPackages(filterNone bool) map[string]*Package {
+func (set *Set) FilteredPackages(filterNone bool) map[string]*Package {
 	if filterNone {
-		return res.Packages
+		return set.Packages
 	}
 	filtered := map[string]*Package{}
-	for name, pkg := range res.Packages {
+	for name, pkg := range set.Packages {
 		if pkg.State != Skip {
 			filtered[name] = pkg
 		}
@@ -227,26 +204,12 @@ func (res *Set) FilteredPackages(filterNone bool) map[string]*Package {
 	return filtered
 }
 
-// FilteredTests filters out skipped tests.
-func (pkg *Package) FilteredTests(filterSkip bool) map[string]*Test {
-	if filterSkip {
-		return pkg.Results
-	}
-	filtered := map[string]*Test{}
-	for name, test := range pkg.Results {
-		if test.State != Skip {
-			filtered[name] = test
-		}
-	}
-	return filtered
-}
-
-// RankedTests returns tests that are slower than the threshold and ranks them.
-func (res *Set) RankedTests(threshold time.Duration) []*Test {
+// RankedTests returns tests that are slower than the thsethold and ranks them.
+func (set *Set) RankedTests(thsethold time.Duration) []*Test {
 	tests := []*Test{}
-	for _, pkg := range res.Packages {
-		for _, test := range pkg.Results {
-			if test.TimeElapsed >= threshold {
+	for _, pkg := range set.Packages {
+		for _, test := range pkg.Tests {
+			if test.TimeElapsed >= thsethold {
 				tests = append(tests, test)
 			}
 		}

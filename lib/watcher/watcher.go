@@ -17,29 +17,30 @@ func New(paths ...string) (*Watcher, error) {
 	if err != nil {
 		return nil, err
 	}
+	watcher := &Watcher{events: fsntfy}
+	return watcher, walkAndFind(paths, watcher.events.Add)
+}
 
-	watcher := &Watcher{
-		events: fsntfy,
-	}
-
+func walkAndFind(paths []string, add func(string) error) error {
 	for _, path := range paths {
-		path, _ = filepath.Abs(strings.TrimSuffix(path, "/..."))
+		path, err := filepath.Abs(strings.TrimSuffix(path, "/..."))
+		if err != nil {
+			return err
+		}
 		if err = filepath.Walk(path, func(path string, info os.FileInfo, err error) error {
 			if err != nil {
 				return err
-			}
-			if info.IsDir() || strings.HasSuffix(path, ".go") {
-				if err := watcher.events.Add(path); err != nil {
+			} else if info.IsDir() || strings.HasSuffix(path, ".go") {
+				if err := add(path); err != nil {
 					return err
 				}
 			}
 			return nil
 		}); err != nil {
-			return nil, err
+			return err
 		}
 	}
-
-	return watcher, nil
+	return nil
 }
 
 func (watcher *Watcher) Stop() {

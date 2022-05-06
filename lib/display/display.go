@@ -2,7 +2,6 @@ package display
 
 import (
 	"io"
-	"strings"
 
 	"github.com/tanema/og/lib/config"
 	"github.com/tanema/og/lib/results"
@@ -38,60 +37,44 @@ func New(w io.Writer, cfg *config.Config) *Renderer {
 }
 
 // Render will render the display of the tests
-func (render *Renderer) Render(set *results.Set, pkg *results.Package, test *results.Test) {
+func (render *Renderer) Render(set *results.Set) {
+	if !set.Any() {
+		return
+	}
 	render.sb.Render(render.cfg.ResultsTemplate, renderData{set, render.cfg})
 }
 
 // Summary will re-render and add on the summary
 func (render *Renderer) Summary(set *results.Set) {
-	formatBuildErrors(set)
-	formatFailures(set)
-	render.sb.Render(render.cfg.ResultsTemplate+render.cfg.SummaryTemplate, renderData{set, render.cfg})
-}
+	data := renderData{set, render.cfg}
 
-func formatBuildErrors(set *results.Set) {
-	for i, msg := range set.BuildErrors {
-		if strings.Contains(msg, "have (") {
-			set.BuildErrors[i] = term.Sprintf("{{. | red}}", msg)
-		} else if strings.Contains(msg, "want (") {
-			set.BuildErrors[i] = term.Sprintf("{{. | green}}", msg)
-		}
+	render.sb.Reset()
+	defer render.sb.Flush()
+	if set.Any() {
+		render.sb.Write(render.cfg.ResultsTemplate, data)
 	}
-}
 
-func formatFailures(set *results.Set) {
-	for pkg, fails := range set.Failures {
-		for i, fail := range fails {
-			finalMessages := []string{}
-			for j := 0; j < len(fail.Messages); j++ {
-				msg := set.Failures[pkg][i].Messages[j]
-				if strings.Contains(msg, "--- Expected") || strings.Contains(msg, "+++ Actual") {
-					continue
-				} else if strings.Contains(msg, "expected:") || strings.Contains(msg, "Want:") {
-					finalMessages = append(finalMessages, term.Sprintf(`{{. | green}}`, msg))
-				} else if strings.HasPrefix(msg, "(testify.compStruct) {") {
-					finalMessages = append(finalMessages, term.Sprintf(`{{"{" | green}}`, msg))
-					j++
-					for ; ; j++ {
-						msg = set.Failures[pkg][i].Messages[j]
-						if strings.HasPrefix(msg, "+ ") {
-							msg = strings.TrimPrefix(msg, "+ ")
-							finalMessages = append(finalMessages, term.Sprintf("  {{. | red}}", msg))
-						} else if msg == "}" {
-							finalMessages = append(finalMessages, term.Sprintf("{{. | green}}", msg))
-							break
-						} else {
-							msg = strings.TrimPrefix(msg, "- ")
-							finalMessages = append(finalMessages, term.Sprintf("  {{. | green}}", msg))
-						}
-					}
-				} else if strings.Contains(msg, "@@ ") {
-					finalMessages = append(finalMessages, term.Sprintf("{{. | cyan}}", msg))
-				} else {
-					finalMessages = append(finalMessages, term.Sprintf("{{. | red}}", msg))
-				}
-			}
-			set.Failures[pkg][i].Messages = finalMessages
-		}
+	if len(set.BuildErrors) > 0 {
+		render.sb.Write(BuildErrorsTemplate, data)
+	}
+
+	if !set.Any() {
+		render.sb.Write(`{{"No Tests"| bold | bgBlue}} {{.Mod | bold}}/({{len .Packages | cyan}})`, set)
+		return
+	}
+	if len(set.Failures()) > 0 {
+		render.sb.Write(FailLineTemplate+PanicTemplate+TestifyDiffTemplate+TestFailuresTemplate, data)
+	}
+	if len(set.Skips()) > 0 {
+		render.sb.Write(TestSkipTemplate, data)
+	}
+	if !render.cfg.HideSummary {
+		render.sb.Write(render.cfg.SummaryTemplate, data)
+	}
+	if !render.cfg.HideElapsed {
+		render.sb.Write(`{{"Elapsed" | bold}}: {{.Set.TimeElapsed | cyan | bold}}`, data)
+	}
+	if render.cfg.Threshold > 0 && len(set.RankedTests(render.cfg.Threshold)) > 0 {
+		render.sb.Write(TestRankTemplate, data)
 	}
 }

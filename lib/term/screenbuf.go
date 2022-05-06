@@ -125,7 +125,11 @@ func NewScreenBuf(w io.Writer) *ScreenBuf {
 	return &ScreenBuf{buf: &bytes.Buffer{}, w: w}
 }
 
-func (s *ScreenBuf) reset() {
+// Reset will empty the buffer and refill it with control characters that will
+// clear the previous data on the next flush call.
+func (s *ScreenBuf) Reset() {
+	s.mut.Lock()
+	defer s.mut.Unlock()
 	linecount := bytes.Count(s.buf.Bytes(), []byte("\n"))
 	s.buf.Reset()
 	ClearLines(s.buf, linecount)
@@ -135,19 +139,28 @@ func (s *ScreenBuf) reset() {
 // only a single writer at a time can write. This prevents the buffer from losing
 // sync with the newlines
 func (s *ScreenBuf) Render(in string, data interface{}) {
+	s.Reset()
+	defer s.Flush()
+	s.Write(in, data)
+}
+
+// Write will write to the buffer, this will not render to the screen without calling
+// Flush. It will also not reset the screen, this is append only. Call reset first.
+func (s *ScreenBuf) Write(in string, data interface{}) {
 	s.mut.Lock()
 	defer s.mut.Unlock()
-	s.reset()
-	defer s.flush()
-	termWidth := Width()
-	tmpl := ansiwrap(renderStringTemplate(in, data), termWidth)
+	tmpl := ansiwrap(renderStringTemplate(in, data), Width())
 	if len(tmpl) > 0 && tmpl[len(tmpl)-1] != '\n' {
 		tmpl = append(tmpl, '\n')
 	}
 	s.buf.Write(tmpl)
 }
 
-func (s *ScreenBuf) flush() {
+// Flush will flush the render buffer to the screen, this should be called after
+// sever calls to Write
+func (s *ScreenBuf) Flush() {
+	s.mut.Lock()
+	defer s.mut.Unlock()
 	io.Copy(s.w, bytes.NewBuffer(s.buf.Bytes()))
 }
 

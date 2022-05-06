@@ -1,25 +1,65 @@
 package display
 
 const (
-	SummaryTemplate = `{{if not .Cfg.HideSummary}}
-{{if gt (len .Set.BuildErrors) 0}}{{"Build Errors"| magenta | bold}}:
-{{range .Set.BuildErrors}} {{. | magenta}}
-{{end -}}{{- end -}}
-{{- if gt (len .Set.Failures) 0}}{{"Failed Tests"| red | bold}}:
-{{range $pkg, $fails := .Set.Failures }}{{"●" | bold}} {{ $pkg | bold }}
-{{range $fails}}  {{.Name | bold}}:
-{{range .Messages}}{{.}}{{end}}{{- end}}{{end}}{{- end -}}
-{{- if gt (len .Set.Skips) 0}}{{- "Skipped Tests"| yellow | bold}}:
-{{range $pkg, $skips := .Set.Skips }}{{"●" | bold}} {{ $pkg | bold }}
-{{range $skips}}  {{. | yellow}}
-{{end -}}
-{{- end}}{{- end -}}
-{{- "Tests" | bold}}: Pass: {{.Set.TestSummary.Pass | green}}{{if not .Cfg.HideSkip}} Skip: {{.Set.TestSummary.Skip | blue}}{{end}} Fail: {{.Set.TestSummary.Fail | red}} Total: {{.Set.TotalTests | bold}}
-{{"Packages"| bold}}: Pass: {{.Set.PkgSummary.Pass | green}}{{if not .Cfg.HideEmpty}} NoTests: {{.Set.PkgSummary.Skip | blue}}{{end}} Fail: {{.Set.PkgSummary.Fail | red}} Cached: {{.Set.Cached | green}} Total: {{len .Set.Packages | bold}}{{end}}{{if not .Cfg.HideElapsed}}
-{{"Elapsed" | bold}}: {{.Set.TimeElapsed | cyan}}{{end}}
-{{if and (gt .Cfg.Threshold 0) (gt (len (.Set.RankedTests .Cfg.Threshold)) 0)}}{{"Slow Tests:" | bold}}
-{{range (.Set.RankedTests .Cfg.Threshold)}}{{.TimeElapsed | cyan}} {{.Package}} {{.Name}}
+	BuildErrorsTemplate = `{{"Build Errors"| magenta | bold}}:{{range .Set.BuildErrors}}
+{{.Package}} {{range .Lines}}
+  {{.Path | cyan}}:{{.Line | bold}}:{{.Column | bold}} {{.Message | magenta}}{{if ne .Have ""}}
+    Expected: {{.Want | green}}
+    Actual  : {{.Have | red}}
+{{- end}}{{- end}}{{end}}`
+
+	FailLineTemplate = `{{define "line"}}{{.File | cyan}}:{{.Line |bold}} {{range .Messages}}{{.}}{{end}}{{end}}`
+
+	PanicTemplate = `{{define "panic"}}{{"Panic" | bold | bgRed}} {{index .Messages 0 | red}}{{range .PanicTrace}}
+      {{.Path | cyan}}:{{.Line | bold}}:{{.Fn}}{{end}}{{end}}`
+
+	TestifyDiffTemplate = `{{define "diff"}}{{.File | cyan}}:{{.Line |bold}} {{.Diff.Error | red}}
+		{{- if .Diff.Message}} "{{.Diff.Message | bold}}"{{ end}}
+    {{- if ne .Diff.Expected ""}}
+    Expected: {{.Diff.Expected | green}}
+    Actual  : {{.Diff.Actual | red}}
+    {{- end}}{{if gt (len .Diff.Comp) 0}}
+    Diff: {{.Diff.Range | cyan}}
+    {
+    {{- range $fieldName, $field := .Diff.Comp}}{{if .Correct}}
+      {{.Name | green | faint}}: {{.Val.Value | green | faint}}
+    {{- else}}
+      {{.Name | bold}}: {{.Expected.Value | green}} {{"!=" | bold}} {{.Actual.Value | red}}
+    {{- end}}{{end}}
+    }
+    {{- end -}}
+  {{- end}}`
+
+	TestFailuresTemplate = `{{"Failed Tests"| red | bold}}: {{range $pkgName, $tests := .Set.Failures }}
+{{- range $tstName, $failures := $tests}}
+{{$pkgName}}#{{$tstName}}:
+  {{- if and (and (eq (len $failures) 1) (not (index $failures 0).Diff) (not (index $failures 0).IsPanic))}} {{template "line" (index $failures 0)}}
+  {{- else}}{{range $failures}}{{if .Diff}}
+  {{template "diff" .}}{{else if .IsPanic}}
+  {{template "panic" .}}{{else}}
+  {{template "line" .}}{{end}}
+  {{- end -}}{{end}}
+  {{- end -}}
+{{- end}}`
+
+	TestSkipTemplate = `{{"Skipped Tests"| yellow | bold}}:
+{{range $pkg, $skips := .Set.Skips }}
+{{- range $skips}}  {{ $pkg | yellow }}#{{. | yellow}}
 {{end}}{{end}}`
+
+	SummaryTemplate = `{{"Tests("| bold}}{{.Set.TotalTests | bold}}{{"): " | bold}}
+{{- "Pass: " | green}}{{.Set.TestSummary.Pass | green | bold}}
+{{- if not .Cfg.HideSkip}}{{" Skip: " | blue}}{{.Set.TestSummary.Skip | blue | bold}}{{end}}
+{{- " Fail: " | red}}{{.Set.TestSummary.Fail | red | bold}}
+{{"Packages("| bold}}{{len .Set.Packages | bold}}{{"): " | bold}}
+{{- "Pass: " | green}}{{.Set.PkgSummary.Pass | green | bold}}
+{{- if not .Cfg.HideEmpty}}{{" NoTests: " | blue}}{{.Set.PkgSummary.Skip | blue | bold}}{{end}}
+{{- " Fail: " | red}}{{.Set.PkgSummary.Fail | red | bold}}
+{{- " Cached: " | green}}{{.Set.Cached | green | bold}}`
+
+	TestRankTemplate = `{{"Slow Tests:" | bold}}
+{{range (.Set.RankedTests .Cfg.Threshold)}}{{.TimeElapsed | cyan}} {{.Package}} {{.Name}}
+{{end}}`
 
 	dotsTemplate = `{{range $pkgname, $pkg := (.Set.FilteredPackages (not $.Cfg.HideEmpty)) -}}
 	{{- range $testname, $test := ($pkg.FilteredTests (not $.Cfg.HideSkip)) -}}

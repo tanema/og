@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bufio"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -17,6 +18,7 @@ import (
 	"github.com/tanema/og/lib/display"
 	"github.com/tanema/og/lib/find"
 	"github.com/tanema/og/lib/results"
+	"github.com/tanema/og/lib/term"
 	"github.com/tanema/og/lib/watcher"
 )
 
@@ -31,9 +33,9 @@ and notice what exactly is wrong at a glance. og is a tool to run go commands
 with color.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		cobra.CheckErr(validateDisplay(cfg))
-		args, err := fmtArgs(cfg, args...)
+		testargs, err := fmtArgs(cfg, args...)
 		cobra.CheckErr(err)
-		test(cfg, args...)
+		test(cfg, testargs...)
 		if cfg.Watch {
 			paths, _, _ := find.Paths(args)
 			notifier, err := watcher.New(paths...)
@@ -44,6 +46,8 @@ with color.`,
 }
 
 func init() {
+	log.SetFlags(log.Ltime)
+
 	cobra.CheckErr(cfg.Load())
 
 	rootCmd.Flags().StringVarP(&cfg.Display, "display", "d", "dots", "change the display of the test outputs [dots, pdots, names, pnames]")
@@ -52,10 +56,11 @@ func init() {
 	rootCmd.Flags().BoolVarP(&cfg.HideEmpty, "hideempty", "p", false, "hide info about packages without tests")
 	rootCmd.Flags().BoolVarP(&cfg.HideElapsed, "hideelapse", "e", false, "hide the elapsed time output")
 	rootCmd.Flags().BoolVarP(&cfg.HideSummary, "hidesummary", "m", false, "hide the complete summary output")
-	rootCmd.Flags().DurationVarP(&cfg.Threshold, "threshold", "r", time.Second, "output lists of tests slower than the threshold. 0 will disable")
+	rootCmd.Flags().DurationVarP(&cfg.Threshold, "threshold", "r", 5*time.Second, "output lists of tests slower than the threshold. 0 will disable")
+	rootCmd.Flags().BoolVarP(&cfg.Raw, "raw", "R", false, "just run the go command with og easy autocomplete and watch")
+	rootCmd.Flags().BoolVarP(&cfg.Dump, "dump", "D", false, "dumps the final state in json for usage")
 
 	rootCmd.Flags().BoolVar(&cfg.NoCache, "nocache", false, "disable go test cache")
-	rootCmd.Flags().BoolVar(&cfg.Parallel, "parallel", false, "enable parallel tests")
 	rootCmd.Flags().BoolVar(&cfg.Short, "short", false, "run short tests")
 	rootCmd.Flags().BoolVar(&cfg.Vet, "vet", false, "vet code alone with tests")
 	rootCmd.Flags().BoolVar(&cfg.Race, "race", false, "check for race conditions as well")
@@ -91,24 +96,29 @@ func onEvent(cfg *config.Config) func(string) {
 			path = filepath.Dir(path)
 		}
 		path = strings.ReplaceAll(path, cfg.Root, ".")
-		log.Printf("Running %v\n", path)
+		log.Println(term.Sprintf("running {{. | cyan}}", path))
 		args, _ := fmtArgs(cfg, path)
 		test(cfg, args...)
 	}
 }
 
 func test(cfg *config.Config, args ...string) {
-	r, w := io.Pipe()
-	defer r.Close()
-	var wg sync.WaitGroup
-	go process(cfg, &wg, r)
-	runCommand(w, args...)
-	w.Close()
-	wg.Wait()
+	if cfg.Raw {
+		fmt.Println(term.Sprintf("{{. | cyan}}", strings.Join(args, " ")))
+		runRawCommand(args...)
+	} else {
+		r, w := io.Pipe()
+		defer r.Close()
+		var wg sync.WaitGroup
+		go process(cfg, &wg, r)
+		runCommand(w, args...)
+		w.Close()
+		wg.Wait()
+	}
 }
 
 func fmtArgs(cfg *config.Config, args ...string) ([]string, error) {
-	testArgs := append([]string{"go", "test", "-json", "-v"}, cfg.Args()...)
+	testArgs := cfg.Args()
 	paths, tests, err := find.Paths(args)
 	if err != nil {
 		return nil, err
@@ -123,16 +133,21 @@ func process(cfg *config.Config, wg *sync.WaitGroup, r io.Reader) {
 	wg.Add(1)
 	defer wg.Done()
 
-	set := results.New(cfg.ModName)
+	set := results.New(cfg.ModName, cfg.Root)
 	deco := display.New(cfg.Out, cfg)
-	defer deco.Summary(set)
-	defer set.Complete()
 
 	scanner := bufio.NewScanner(r)
 	scanner.Split(bufio.ScanLines)
 	for scanner.Scan() {
-		pkg, tst := set.Parse(scanner.Bytes())
-		deco.Render(set, pkg, tst)
+		set.Parse(scanner.Bytes())
+		deco.Render(set)
+	}
+
+	set.Complete()
+	deco.Summary(set)
+	if cfg.Dump {
+		data, _ := json.Marshal(set)
+		fmt.Println(string(data))
 	}
 }
 
@@ -141,5 +156,15 @@ func runCommand(w io.Writer, args ...string) error {
 	cmd.Stderr = w
 	cmd.Stdout = w
 	cmd.Env = os.Environ()
+	return cmd.Run()
+}
+
+func runRawCommand(args ...string) error {
+	cmd := exec.Command(args[0], args[1:]...)
+	stderr, _ := cmd.StderrPipe()
+	stdout, _ := cmd.StdoutPipe()
+	cmd.Env = os.Environ()
+	go io.Copy(cfg.Out, stderr)
+	go io.Copy(cfg.Out, stdout)
 	return cmd.Run()
 }
