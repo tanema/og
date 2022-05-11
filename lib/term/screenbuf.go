@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"strings"
 	"sync"
 	"text/template"
 	"unicode"
@@ -45,6 +46,7 @@ const (
 )
 
 var funcMap = template.FuncMap{
+	"rainbow":   rainbow,
 	"black":     styler(fGBlack),
 	"red":       styler(fGRed),
 	"green":     styler(fGGreen),
@@ -82,6 +84,17 @@ func styler(attr attribute) func(interface{}) string {
 		}
 		return fmt.Sprintf("\033[%sm%v\033[0m", attr, v)
 	}
+}
+
+func rainbow(v interface{}) string {
+	s := v.(string)
+	chunks := make([]string, len(s))
+	colors := []attribute{fGRed, fGYellow, fGGreen, fGBlue, fGCyan, fGMagenta}
+	for i, chr := range s {
+		attr := colors[i%len(colors)]
+		chunks[i] = fmt.Sprintf("\033[%sm%c\033[0m", attr, chr)
+	}
+	return strings.Join(chunks, "")
 }
 
 func iconer(ic icon) func() string {

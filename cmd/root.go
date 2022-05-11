@@ -8,65 +8,33 @@ import (
 	"log"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/tanema/og/lib/config"
 	"github.com/tanema/og/lib/display"
-	"github.com/tanema/og/lib/find"
 	"github.com/tanema/og/lib/results"
 	"github.com/tanema/og/lib/term"
-	"github.com/tanema/og/lib/watcher"
 )
 
 var cfg = &config.Config{}
 
 var rootCmd = &cobra.Command{
 	Use:   "og [path[:[lineNum|TestName]]|TestName]",
-	Short: "A go test command wrapper to make things colorful",
-	Long: `Go's test output can sometimes be quit hard to parse, and harder to scan.
-A common solution to this is syntax highlighting. It makes it easy to scan
-and notice what exactly is wrong at a glance. og is a tool to run go commands
-with color.`,
-	Run: func(cmd *cobra.Command, args []string) {
+	Short: "A go command wrapper to make things colorful",
+	Long: `og wraps around common go commands to highlight and decorate the output
+for better scannability and simply for vanity.`,
+	PersistentPreRun: func(cmd *cobra.Command, args []string) {
+		cobra.CheckErr(cfg.Load())
 		cobra.CheckErr(validateDisplay(cfg))
-		testargs, err := fmtArgs(cfg, args...)
-		cobra.CheckErr(err)
-		test(cfg, testargs...)
-		if cfg.Watch {
-			paths, _, _ := find.Paths(args)
-			notifier, err := watcher.New(paths...)
-			cobra.CheckErr(err)
-			notifier.Watch(onEvent(cfg))
-		}
 	},
 }
 
 func init() {
 	log.SetFlags(log.Ltime)
-
-	cobra.CheckErr(cfg.Load())
-
-	rootCmd.Flags().StringVarP(&cfg.Display, "display", "d", "dots", "change the display of the test outputs [dots, pdots, names, pnames]")
-	rootCmd.Flags().BoolVarP(&cfg.Watch, "watch", "w", false, "watch for file changes and re-run tests")
-	rootCmd.Flags().BoolVarP(&cfg.HideSkip, "hideskip", "s", false, "hide info about skipped tests")
-	rootCmd.Flags().BoolVarP(&cfg.HideEmpty, "hideempty", "p", false, "hide info about packages without tests")
-	rootCmd.Flags().BoolVarP(&cfg.HideElapsed, "hideelapse", "e", false, "hide the elapsed time output")
-	rootCmd.Flags().BoolVarP(&cfg.HideSummary, "hidesummary", "m", false, "hide the complete summary output")
-	rootCmd.Flags().DurationVarP(&cfg.Threshold, "threshold", "r", 5*time.Second, "output lists of tests slower than the threshold. 0 will disable")
-	rootCmd.Flags().BoolVarP(&cfg.Raw, "raw", "R", false, "just run the go command with og easy autocomplete and watch")
-	rootCmd.Flags().BoolVarP(&cfg.Dump, "dump", "D", false, "dumps the final state in json for usage")
-
-	rootCmd.Flags().BoolVar(&cfg.NoCache, "nocache", false, "disable go test cache")
-	rootCmd.Flags().BoolVar(&cfg.Short, "short", false, "run short tests")
-	rootCmd.Flags().BoolVar(&cfg.Vet, "vet", false, "vet code alone with tests")
-	rootCmd.Flags().BoolVar(&cfg.Race, "race", false, "check for race conditions as well")
-	rootCmd.Flags().BoolVar(&cfg.FailFast, "failfast", false, "terminate after first test failure")
-	rootCmd.Flags().BoolVar(&cfg.Shuffle, "shuffle", false, "shuffle test order")
-	rootCmd.Flags().StringVar(&cfg.Cover, "cover", "", "enable coverage and output it to this path")
+	rootCmd.PersistentFlags().BoolVarP(&cfg.Raw, "raw", "R", false, "just run the go command with og easy autocomplete and watch")
+	rootCmd.PersistentFlags().BoolVarP(&cfg.Dump, "dump", "D", false, "dumps the final state in json for usage")
 }
 
 // Execute is the main entry into the cli
@@ -81,90 +49,51 @@ func validateDisplay(cfg *config.Config) error {
 	if cfg.ResultsTemplate == "" {
 		cfg.ResultsTemplate = display.Decorators[cfg.Display]
 	}
-	if cfg.SummaryTemplate == "" {
-		cfg.SummaryTemplate = display.SummaryTemplate
-	}
 	return nil
 }
 
-func onEvent(cfg *config.Config) func(string) {
-	return func(path string) {
-		if strings.HasSuffix(path, ".go") && !strings.HasSuffix(path, "_test.go") {
-			path = strings.ReplaceAll(path, ".go", "_test.go")
-		}
-		if _, err := os.Stat(path); err != nil {
-			path = filepath.Dir(path)
-		}
-		path = strings.ReplaceAll(path, cfg.Root, ".")
-		log.Println(term.Sprintf("running {{. | cyan}}", path))
-		args, _ := fmtArgs(cfg, path)
-		test(cfg, args...)
-	}
-}
+func runCommand(cfg *config.Config, summary bool, args ...string) {
+	var out io.WriteCloser = cfg.Out
+	var wg sync.WaitGroup
+	cmd := exec.Command(args[0], args[1:]...)
+	cmd.Env = os.Environ()
 
-func test(cfg *config.Config, args ...string) {
 	if cfg.Raw {
 		fmt.Println(term.Sprintf("{{. | cyan}}", strings.Join(args, " ")))
-		runRawCommand(args...)
 	} else {
 		r, w := io.Pipe()
 		defer r.Close()
-		var wg sync.WaitGroup
-		go process(cfg, &wg, r)
-		runCommand(w, args...)
-		w.Close()
-		wg.Wait()
+		go processOutput(cfg, &wg, r, summary)
+		out = w
 	}
+	cmd.Stderr = out
+	cmd.Stdout = out
+	cmd.Run()
+	if !cfg.Raw {
+		out.Close()
+	}
+	wg.Wait()
 }
 
-func fmtArgs(cfg *config.Config, args ...string) ([]string, error) {
-	testArgs := cfg.Args()
-	paths, tests, err := find.Paths(args)
-	if err != nil {
-		return nil, err
-	}
-	if len(tests) > 0 {
-		testArgs = append(testArgs, "-run", strings.Join(tests, "|"))
-	}
-	return append(testArgs, paths...), nil
-}
-
-func process(cfg *config.Config, wg *sync.WaitGroup, r io.Reader) {
+func processOutput(cfg *config.Config, wg *sync.WaitGroup, r io.Reader, summary bool) {
 	wg.Add(1)
 	defer wg.Done()
-
 	set := results.New(cfg.ModName, cfg.Root)
-	deco := display.New(cfg.Out, cfg)
-
+	deco := display.New(cfg)
 	scanner := bufio.NewScanner(r)
 	scanner.Split(bufio.ScanLines)
 	for scanner.Scan() {
 		set.Parse(scanner.Bytes())
 		deco.Render(set)
 	}
-
 	set.Complete()
-	deco.Summary(set)
+	if summary {
+		deco.Summary(set)
+	} else {
+		deco.BuildErrors(set)
+	}
 	if cfg.Dump {
 		data, _ := json.Marshal(set)
 		fmt.Println(string(data))
 	}
-}
-
-func runCommand(w io.Writer, args ...string) error {
-	cmd := exec.Command(args[0], args[1:]...)
-	cmd.Stderr = w
-	cmd.Stdout = w
-	cmd.Env = os.Environ()
-	return cmd.Run()
-}
-
-func runRawCommand(args ...string) error {
-	cmd := exec.Command(args[0], args[1:]...)
-	stderr, _ := cmd.StderrPipe()
-	stdout, _ := cmd.StdoutPipe()
-	cmd.Env = os.Environ()
-	go io.Copy(cfg.Out, stderr)
-	go io.Copy(cfg.Out, stdout)
-	return cmd.Run()
 }

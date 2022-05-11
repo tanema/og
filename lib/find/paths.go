@@ -1,34 +1,32 @@
 package find
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strconv"
 	"strings"
 )
-
-var filepathPattern = regexp.MustCompile(`^([.*/\.^:]*[^:]*):*(.+)*`)
 
 func Paths(args []string) (paths, tests []string, err error) {
 	for _, arg := range args {
 		parts := strings.Split(arg, ":")
 		path := parts[0]
+
 		if strings.HasSuffix(path, ".go") {
 			dir := filepath.Dir(path)
 			if !strings.HasPrefix(dir, "/") && !strings.HasPrefix(dir, "./") {
 				dir = "./" + dir
 			}
 			paths = append(paths, dir)
-		} else if info, err := os.Stat(path); err == nil && info.IsDir() {
+		} else if info, err := os.Stat(strings.TrimRight(path, "/...")); err == nil && info.IsDir() {
+			if !strings.HasPrefix(path, "/") && !strings.HasPrefix(path, "./") {
+				path = "./" + path
+			}
 			paths = append(paths, path)
 		} else if strings.HasPrefix(arg, "Test") {
 			tests = append(tests, arg)
-		} else if strings.HasSuffix(arg, "/...") {
-			paths = append(paths, path)
 		} else {
-			return nil, nil, fmt.Errorf("Could not resolve test: %v %v", path, err)
+			paths = append(paths, path)
 		}
 		if len(parts) == 1 {
 			if strings.HasSuffix(path, ".go") {

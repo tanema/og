@@ -2,11 +2,13 @@ package results
 
 import (
 	"encoding/json"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/tanema/og/lib/excerpt"
 	"github.com/tanema/og/lib/stopwatch"
 )
 
@@ -51,12 +53,13 @@ type (
 	}
 	// BuildErrorLine is part of the build error trace
 	BuildErrorLine struct {
-		Path    string `json:"path"`
-		Line    int    `json:"line"`
-		Column  int    `json:"column"`
-		Have    string `json:"have"`
-		Want    string `json:"want"`
-		Message string `json:"message"`
+		Path    string   `json:"path"`
+		Line    int      `json:"line"`
+		Column  int      `json:"column"`
+		Have    string   `json:"have"`
+		Want    string   `json:"want"`
+		Message string   `json:"message"`
+		Excerpt []string `json:"excerpt"`
 	}
 	logLine struct {
 		Package string
@@ -140,16 +143,21 @@ func (set *Set) parseBuildError(data string) {
 		err := set.BuildErrors[len(set.BuildErrors)-1]
 		line := err.Lines[len(err.Lines)-1]
 		line.Want = strings.TrimSpace(strings.TrimPrefix(data, "want "))
-	} else if !strings.HasPrefix(data, "FAIL") {
+	} else if !strings.HasPrefix(data, "FAIL") && len(set.BuildErrors) > 0 {
 		err := set.BuildErrors[len(set.BuildErrors)-1]
 		parts := strings.Split(data, ":")
 		lineNum, _ := strconv.Atoi(parts[1])
 		colNum, _ := strconv.Atoi(parts[2])
+		excp := []string{}
+		if file, err := os.Open(parts[0]); err == nil {
+			excp = excerpt.Excerpt(file, lineNum, colNum)
+		}
 		err.Lines = append(err.Lines, &BuildErrorLine{
 			Path:    parts[0],
 			Line:    lineNum,
 			Column:  colNum,
 			Message: parts[3],
+			Excerpt: excp,
 		})
 	}
 }

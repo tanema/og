@@ -41,22 +41,19 @@
   - [x] .config/og global config for display
     - [x] Allow configurable text templates, buffered, non-buffered
 - [x] no display, just run go command
-- [ ] outputs Better syntax highlighting
+- [x] outputs Better syntax highlighting
   - [x] all logging/display to stderr
   - [x] watch timestamp improvement
   - [x] watch no tests output
   - [x] highlight all filenames with line numbers in cyan
-  - [ ] can I parse build errors?
+  - [x] can I parse build errors?
     - [x] panic in tests is not captured. Writing to nil buf
     - [x] build error output still isnt quite right
-    - [ ] build error excerpts?
-    - [ ] go vet output support
-- [ ] term hotkeys to re-run all
-- [ ] More Better inputs
+    - [x] build error excerpts?
+- [x] More Better inputs
   - relative paths prefixed with ./
-  - if dir has no tests then suffix with /...
+  - if dir has no tests then suffix with /... nope, just make it not fail
+- [x] go build, install, test
+- [ ] term hotkeys to re-run all
 - [ ] install test deps if an error happens
-- [ ] go
-  - build
-  - install
-  - test
+- [ ] go vet output support

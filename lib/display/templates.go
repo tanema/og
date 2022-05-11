@@ -5,8 +5,9 @@ const (
 {{.Package}} {{range .Lines}}
   {{.Path | cyan}}:{{.Line | bold}}:{{.Column | bold}} {{.Message | magenta}}{{if ne .Have ""}}
     Expected: {{.Want | green}}
-    Actual  : {{.Have | red}}
-{{- end}}{{- end}}{{end}}`
+    Actual  : {{.Have | red}}{{- end}}{{if and (gt (len .Excerpt) 0) (not $.Cfg.HideExcerpts)}}{{range .Excerpt}}
+    {{.}}{{end}}{{end}}
+{{- end}}{{end}}`
 
 	FailLineTemplate = `{{define "line"}}{{.File | cyan}}:{{.Line |bold}} {{range .Messages}}{{.}}{{end}}{{end}}`
 

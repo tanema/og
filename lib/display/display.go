@@ -1,8 +1,6 @@
 package display
 
 import (
-	"io"
-
 	"github.com/tanema/og/lib/config"
 	"github.com/tanema/og/lib/results"
 	"github.com/tanema/og/lib/term"
@@ -29,9 +27,9 @@ type (
 )
 
 // New will create a new display
-func New(w io.Writer, cfg *config.Config) *Renderer {
+func New(cfg *config.Config) *Renderer {
 	return &Renderer{
-		sb:  term.NewScreenBuf(w),
+		sb:  term.NewScreenBuf(cfg.Out),
 		cfg: cfg,
 	}
 }
@@ -44,20 +42,30 @@ func (render *Renderer) Render(set *results.Set) {
 	render.sb.Render(render.cfg.ResultsTemplate, renderData{set, render.cfg})
 }
 
+// BuildErrors will output only build errors and elapsed for install and build
+func (render *Renderer) BuildErrors(set *results.Set) {
+	data := renderData{set, render.cfg}
+	render.sb.Reset()
+	defer render.sb.Flush()
+	if len(set.BuildErrors) > 0 {
+		render.sb.Write(BuildErrorsTemplate, data)
+	}
+	if !render.cfg.HideElapsed {
+		render.sb.Write(`{{"Elapsed" | bold}}: {{.Set.TimeElapsed | cyan | bold}}`, data)
+	}
+}
+
 // Summary will re-render and add on the summary
 func (render *Renderer) Summary(set *results.Set) {
 	data := renderData{set, render.cfg}
-
 	render.sb.Reset()
 	defer render.sb.Flush()
 	if set.Any() {
 		render.sb.Write(render.cfg.ResultsTemplate, data)
 	}
-
 	if len(set.BuildErrors) > 0 {
 		render.sb.Write(BuildErrorsTemplate, data)
 	}
-
 	if !set.Any() {
 		render.sb.Write(`{{"No Tests"| bold | bgBlue}} {{.Mod | bold}}/({{len .Packages | cyan}})`, set)
 		return
@@ -69,7 +77,7 @@ func (render *Renderer) Summary(set *results.Set) {
 		render.sb.Write(TestSkipTemplate, data)
 	}
 	if !render.cfg.HideSummary {
-		render.sb.Write(render.cfg.SummaryTemplate, data)
+		render.sb.Write(SummaryTemplate, data)
 	}
 	if !render.cfg.HideElapsed {
 		render.sb.Write(`{{"Elapsed" | bold}}: {{.Set.TimeElapsed | cyan | bold}}`, data)

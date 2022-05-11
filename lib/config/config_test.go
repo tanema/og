@@ -30,5 +30,5 @@ func TestArgs(t *testing.T) {
 	assert.Equal(t, []string{"go", "test", "-json", "-v",
 		"-count=1", "-short", "-vet", "all", "-race", "-failfast", "-shuffle",
 		"on", "-covermode", "atomic", "-coverprofile", "file.out",
-	}, cfg.Args())
+	}, cfg.TestArgs())
 }

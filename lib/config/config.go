@@ -16,12 +16,12 @@ const configPath = "$HOME/.config/og.json"
 
 // Config captures running config from flags and global config
 type Config struct {
-	Out             io.Writer
+	Out             io.WriteCloser
 	Root            string
 	ModName         string
 	Display         string        `json:"display"`
 	ResultsTemplate string        `json:"results_template"`
-	SummaryTemplate string        `json:"summary_template"`
+	HideExcerpts    bool          `json:"hide_excerpts"`
 	HideSkip        bool          `json:"hide_skip"`
 	HideEmpty       bool          `json:"hide_empty"`
 	HideElapsed     bool          `json:"hide_elapsed"`
@@ -71,8 +71,8 @@ func (config *Config) findRoot() {
 	}
 }
 
-// Args formats go test args for use on the command
-func (config *Config) Args() []string {
+// TestArgs formats go test args for use on the command
+func (config *Config) TestArgs() []string {
 	testArgs := []string{"go", "test"}
 	if !config.Raw {
 		testArgs = append(testArgs, "-json", "-v")
