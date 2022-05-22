@@ -5,10 +5,12 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/tanema/og/lib/config"
 )
 
 func TestNew(t *testing.T) {
-	set := New("github.com/tanema/og", "/workspace/og")
+	cfg := &config.Config{ModName: "github.com/tanema/og", Root: "/workspace/og"}
+	set := New(cfg, "")
 
 	assert.Equal(t, Pass, set.State)
 	assert.Equal(t, "github.com/tanema/og", set.Mod)
@@ -21,41 +23,46 @@ func TestNew(t *testing.T) {
 
 func TestSetParse(t *testing.T) {
 	t.Run("json package event", func(t *testing.T) {
-		set := New("github.com/tanema/og", "/workspace/og")
+		cfg := &config.Config{ModName: "github.com/tanema/og", Root: "/workspace/og"}
+		set := New(cfg, "")
 		set.Parse([]byte(`{"Package": "github.com/tanema/og/nope", "Action": "pass"}`))
-		assert.Equal(t, set.Packages["nope"].State, Pass)
+		assert.Equal(t, set.Packages["github.com/tanema/og/nope"].State, Pass)
 	})
 	t.Run("json test event", func(t *testing.T) {
-		set := New("github.com/tanema/og", "/workspace/og")
+		cfg := &config.Config{ModName: "github.com/tanema/og", Root: "/workspace/og"}
+		set := New(cfg, "")
 		set.Parse([]byte(`{"Package": "github.com/tanema/og/nope", "Test": "TestA", "Action": "pass"}`))
-		assert.Equal(t, set.Packages["nope"].Tests["TestA"].State, Pass)
+		assert.Equal(t, set.Packages["github.com/tanema/og/nope"].Tests["TestA"].State, Pass)
 		assert.Empty(t, set.BuildErrors)
 	})
 }
 
 func TestSetAdd(t *testing.T) {
 	t.Run("package event", func(t *testing.T) {
-		set := New("github.com/tanema/og", "/workspace/og")
+		cfg := &config.Config{ModName: "github.com/tanema/og", Root: "/workspace/og"}
+		set := New(cfg, "")
 		assert.Equal(t, 0, len(set.Packages))
 		set.Add(Run, "github.com/tanema/og/nope", "", "")
 		assert.Equal(t, 1, len(set.Packages))
-		assert.NotNil(t, set.Packages["nope"])
-		assert.Empty(t, set.Packages["nope"].Tests)
+		assert.NotNil(t, set.Packages["github.com/tanema/og/nope"])
+		assert.Empty(t, set.Packages["github.com/tanema/og/nope"].Tests)
 		assert.Equal(t, 0, set.TotalTests)
 	})
 	t.Run("test event", func(t *testing.T) {
-		set := New("github.com/tanema/og", "/workspace/og")
+		cfg := &config.Config{ModName: "github.com/tanema/og", Root: "/workspace/og"}
+		set := New(cfg, "")
 		assert.Equal(t, 0, len(set.Packages))
 		set.Add(Run, "github.com/tanema/og/nope", "TestFoo", "")
 		assert.Equal(t, 1, len(set.Packages))
-		assert.NotNil(t, set.Packages["nope"])
-		assert.Equal(t, 1, len(set.Packages["nope"].Tests))
+		assert.NotNil(t, set.Packages["github.com/tanema/og/nope"])
+		assert.Equal(t, 1, len(set.Packages["github.com/tanema/og/nope"].Tests))
 		assert.Equal(t, 1, set.TotalTests)
 	})
 }
 
 func TestSetFilteredPackages(t *testing.T) {
-	set := New("github.com/tanema/og", "/workspace/og")
+	cfg := &config.Config{ModName: "github.com/tanema/og", Root: "/workspace/og"}
+	set := New(cfg, "")
 	set.Packages = map[string]*Package{
 		"./one":   {Name: "./one", State: Pass},
 		"./two":   {Name: "./two", State: Skip},
@@ -75,7 +82,8 @@ func TestSetFilteredPackages(t *testing.T) {
 }
 
 func TestSetFilteredTests(t *testing.T) {
-	set := New("github.com/tanema/og", "/workspace/og")
+	cfg := &config.Config{ModName: "github.com/tanema/og", Root: "/workspace/og"}
+	set := New(cfg, "")
 	good1 := &Test{Name: "TestA", TimeElapsed: time.Millisecond}
 	good2 := &Test{Name: "TestB", TimeElapsed: time.Nanosecond}
 	bad1 := &Test{Name: "TestC", TimeElapsed: time.Second}

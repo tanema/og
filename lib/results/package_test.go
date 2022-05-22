@@ -4,12 +4,14 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/tanema/og/lib/config"
 	"github.com/tanema/og/lib/stopwatch"
 )
 
 func TestPackageResult(t *testing.T) {
 	setup := func() (*Set, *Package) {
-		set := New("github.com/tanema/og", "/workspace/og")
+		cfg := &config.Config{ModName: "github.com/tanema/og", Root: "/workspace/og"}
+		set := New(cfg, "")
 		set.Packages["nope"] = &Package{
 			watch: stopwatch.Start(),
 			Name:  "nope",

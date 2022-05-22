@@ -1,6 +1,8 @@
 package display
 
 import (
+	"fmt"
+
 	"github.com/tanema/og/lib/config"
 	"github.com/tanema/og/lib/results"
 	"github.com/tanema/og/lib/term"
@@ -8,8 +10,9 @@ import (
 
 // Decorators are all of the decorator that are available
 var Decorators = map[string]string{
-	"dots":   dotsTemplate,
-	"pdots":  dotsSeparateTemplate,
+	"dots":   fmt.Sprintf(dotsTemplate, "●", "●", "●", "●"),
+	"icons":  fmt.Sprintf(dotsTemplate, "?", "✔", "✗", "⚠"),
+	"pdots":  fmt.Sprintf(dotsSeparateTemplate, "●", "●", "●", "●"),
 	"names":  namesTemplate,
 	"pnames": namesPackageTemplate,
 }
@@ -42,19 +45,6 @@ func (render *Renderer) Render(set *results.Set) {
 	render.sb.Render(render.cfg.ResultsTemplate, renderData{set, render.cfg})
 }
 
-// BuildErrors will output only build errors and elapsed for install and build
-func (render *Renderer) BuildErrors(set *results.Set) {
-	data := renderData{set, render.cfg}
-	render.sb.Reset()
-	defer render.sb.Flush()
-	if len(set.BuildErrors) > 0 {
-		render.sb.Write(BuildErrorsTemplate, data)
-	}
-	if !render.cfg.HideElapsed {
-		render.sb.Write(`{{"Elapsed" | bold}}: {{.Set.TimeElapsed | cyan | bold}}`, data)
-	}
-}
-
 // Summary will re-render and add on the summary
 func (render *Renderer) Summary(set *results.Set) {
 	data := renderData{set, render.cfg}
@@ -79,6 +69,7 @@ func (render *Renderer) Summary(set *results.Set) {
 	if !render.cfg.HideSummary {
 		render.sb.Write(SummaryTemplate, data)
 	}
+	render.sb.Write(`{{"Coverage" | bold}}: {{.Set.CoveragePercent}}%`, data)
 	if !render.cfg.HideElapsed {
 		render.sb.Write(`{{"Elapsed" | bold}}: {{.Set.TimeElapsed | cyan | bold}}`, data)
 	}

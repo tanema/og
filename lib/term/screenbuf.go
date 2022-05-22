@@ -1,104 +1,111 @@
+//go:build !windows
+// +build !windows
+
 package term
 
 import (
 	"bytes"
 	"fmt"
 	"io"
+	"os"
+	"os/exec"
+	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"text/template"
-	"unicode"
 	"unicode/utf8"
 )
 
-type (
-	attribute string
-	icon      struct {
-		color attribute
-		char  string
-	}
-)
-
 const (
-	fGBold      attribute = "1"
-	fGFaint     attribute = "2"
-	fGItalic    attribute = "3"
-	fGUnderline attribute = "4"
-	fGBlack     attribute = "30"
-	fGRed       attribute = "31"
-	fGGreen     attribute = "32"
-	fGYellow    attribute = "33"
-	fGBlue      attribute = "94"
-	fGMagenta   attribute = "35"
-	fGCyan      attribute = "36"
-	fGWhite     attribute = "97"
-	bGBlack     attribute = "40"
-	bGRed       attribute = "41"
-	bGGreen     attribute = "42"
-	bGYellow    attribute = "43"
-	bGBlue      attribute = "44"
-	bGMagenta   attribute = "45"
-	bGCyan      attribute = "46"
-	bGWhite     attribute = "47"
+	defaultTermWidth  = 80
+	defaultTermHeight = 60
 
-	saveCurPos = "\033[s"
-	restCurPos = "\033[u\033[J"
+	esc              = "\033["
+	color            = esc + "%vm"
+	clearColor       = esc + "0m"
+	cursorToStart    = esc + "0G"
+	cursorUpOne      = esc + "1A"
+	clearToEndOfLine = esc + "0K"
+	clearLastLine    = cursorToStart + cursorUpOne + clearToEndOfLine
 )
+
+var ansiPat = regexp.MustCompile(`\033(\[\d+[mKAG])?`)
 
 var funcMap = template.FuncMap{
 	"rainbow":   rainbow,
-	"black":     styler(fGBlack),
-	"red":       styler(fGRed),
-	"green":     styler(fGGreen),
-	"yellow":    styler(fGYellow),
-	"blue":      styler(fGBlue),
-	"magenta":   styler(fGMagenta),
-	"cyan":      styler(fGCyan),
-	"white":     styler(fGWhite),
-	"bgBlack":   styler(bGBlack),
-	"bgRed":     styler(bGRed),
-	"bgGreen":   styler(bGGreen),
-	"bgYellow":  styler(bGYellow),
-	"bgBlue":    styler(bGBlue),
-	"bgMagenta": styler(bGMagenta),
-	"bgCyan":    styler(bGCyan),
-	"bgWhite":   styler(bGWhite),
-	"bold":      styler(fGBold),
-	"faint":     styler(fGFaint),
-	"italic":    styler(fGItalic),
-	"underline": styler(fGUnderline),
-	"iconQ":     iconer(iconInitial),
-	"iconGood":  iconer(iconGood),
-	"iconWarn":  iconer(iconWarn),
-	"iconBad":   iconer(iconBad),
-	"iconSel":   iconer(iconSelect),
-	"iconChk":   iconer(iconCheckboxCheck),
-	"iconBox":   iconer(iconCheckbox),
+	"bold":      styler("1"),
+	"faint":     styler("2"),
+	"italic":    styler("3"),
+	"underline": styler("4"),
+	"black":     styler("30"),
+	"red":       styler("31"),
+	"green":     styler("32"),
+	"yellow":    styler("33"),
+	"magenta":   styler("35"),
+	"cyan":      styler("36"),
+	"bgBlack":   styler("40"),
+	"bgRed":     styler("41"),
+	"bgGreen":   styler("42"),
+	"bgYellow":  styler("43"),
+	"bgBlue":    styler("44"),
+	"bgMagenta": styler("45"),
+	"bgCyan":    styler("46"),
+	"bgWhite":   styler("47"),
+	"blue":      styler("94"),
+	"white":     styler("97"),
 }
 
-func styler(attr attribute) func(interface{}) string {
+func styler(attr string) func(interface{}) string {
 	return func(v interface{}) string {
 		s, ok := v.(string)
 		if ok && s == ">>" {
-			return fmt.Sprintf("\033[%sm", attr)
+			return fmt.Sprintf(color, attr)
 		}
-		return fmt.Sprintf("\033[%sm%v\033[0m", attr, v)
+		return fmt.Sprintf(color+"%v"+clearColor, attr, v)
 	}
 }
 
 func rainbow(v interface{}) string {
 	s := v.(string)
 	chunks := make([]string, len(s))
-	colors := []attribute{fGRed, fGYellow, fGGreen, fGBlue, fGCyan, fGMagenta}
+	colors := []string{"31", "33", "32", "94", "36", "35"}
 	for i, chr := range s {
 		attr := colors[i%len(colors)]
-		chunks[i] = fmt.Sprintf("\033[%sm%c\033[0m", attr, chr)
+		chunks[i] = fmt.Sprintf(color+"%c"+clearColor, attr, chr)
 	}
 	return strings.Join(chunks, "")
 }
 
-func iconer(ic icon) func() string {
-	return func() string { return styler(ic.color)(ic.char) }
+// Width returns the column width of the terminal
+func Width() int {
+	w, _ := size()
+	return w
+}
+
+// Height returns the row size of the terminal
+func Height() int {
+	_, h := size()
+	return h
+}
+
+func size() (width, height int) {
+	cmd := exec.Command("stty", "size")
+	cmd.Stdin = os.Stdin
+	out, err := cmd.Output()
+	if err != nil {
+		return defaultTermWidth, defaultTermHeight
+	}
+	parts := strings.Split(strings.TrimRight(string(out), "\n"), " ")
+	height, err = strconv.Atoi(parts[0])
+	if err != nil {
+		return defaultTermWidth, defaultTermHeight
+	}
+	width, err = strconv.Atoi(parts[1])
+	if err != nil {
+		return defaultTermWidth, defaultTermHeight
+	}
+	return width, height
 }
 
 // Sprintf formats a string template and outputs console ready text
@@ -109,6 +116,11 @@ func Sprintf(in string, data interface{}) string {
 // Fprintf will print a formatted string out to a writer
 func Fprintf(w io.Writer, in string, data interface{}) {
 	fmt.Fprint(w, string(renderStringTemplate(in, data)))
+}
+
+// ClearLines will move the cursor up and clear the line out for re-rendering
+func ClearLines(out io.Writer, linecount int) {
+	out.Write([]byte(strings.Repeat(clearLastLine, linecount)))
 }
 
 func renderStringTemplate(in string, data interface{}) []byte {
@@ -162,7 +174,7 @@ func (s *ScreenBuf) Render(in string, data interface{}) {
 func (s *ScreenBuf) Write(in string, data interface{}) {
 	s.mut.Lock()
 	defer s.mut.Unlock()
-	tmpl := ansiwrap(renderStringTemplate(in, data), Width())
+	tmpl := wrap(renderStringTemplate(in, data), Width())
 	if len(tmpl) > 0 && tmpl[len(tmpl)-1] != '\n' {
 		tmpl = append(tmpl, '\n')
 	}
@@ -177,13 +189,12 @@ func (s *ScreenBuf) Flush() {
 	io.Copy(s.w, bytes.NewBuffer(s.buf.Bytes()))
 }
 
-// ansiwrap will wrap a byte array (add linebreak) with awareness of
-// ansi character widths
-func ansiwrap(str []byte, width int) []byte {
+func wrap(str []byte, width int) []byte {
 	var output, currentLine []byte
 	for _, s := range str {
 		currentLine = append(currentLine, s)
-		if s == '\n' || runeCount(currentLine) >= width-1 {
+		runes := utf8.RuneCount(ansiPat.ReplaceAll(currentLine, []byte("")))
+		if s == '\n' || runes >= width-1 {
 			if s != '\n' {
 				currentLine = append(currentLine, '\n')
 			}
@@ -192,34 +203,4 @@ func ansiwrap(str []byte, width int) []byte {
 		}
 	}
 	return append(output, currentLine...)
-}
-
-// copied from ansiwrap.
-// https://github.com/manifoldco/ansiwrap/blob/master/ansiwrap.go#L193
-// ansiwrap worked well but I needed a version the preserved
-// spacing so I just copied this method over for acurate space counting.
-// There is a major problem with this though. It is not able to count
-// tab spaces
-func runeCount(b []byte) int {
-	l, inSequence := 0, false
-	for len(b) > 0 {
-		if b[0] == '\033' {
-			inSequence = true
-			b = b[1:]
-			continue
-		}
-		r, rl := utf8.DecodeRune(b)
-		b = b[rl:]
-		if inSequence {
-			if r == 'm' {
-				inSequence = false
-			}
-			continue
-		}
-		if !unicode.IsPrint(r) {
-			continue
-		}
-		l++
-	}
-	return l
 }

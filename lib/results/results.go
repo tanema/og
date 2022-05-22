@@ -2,14 +2,22 @@ package results
 
 import (
 	"encoding/json"
+	"fmt"
+	"io/fs"
+	"math"
 	"os"
+	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/tanema/og/lib/config"
 	"github.com/tanema/og/lib/excerpt"
 	"github.com/tanema/og/lib/stopwatch"
+	"golang.org/x/tools/cover"
+	"golang.org/x/tools/go/packages"
 )
 
 // Action is the states of the tests
@@ -34,17 +42,22 @@ type (
 	}
 	// Set is the complete test results for all packages
 	Set struct {
-		TestSummary Summary             `json:"test_summary"`
-		PkgSummary  Summary             `json:"pkg_summary"`
-		Mod         string              `json:"mod"`
-		Root        string              `json:"root"`
-		Cached      int                 `json:"cached"`
-		Packages    map[string]*Package `json:"packages"`
-		TotalTests  int                 `json:"total_tests"`
-		State       Action              `json:"state"`
-		BuildErrors []*BuildError       `json:"build_errors,omitempty"`
-		TimeElapsed time.Duration       `json:"time_elapsed"`
-		watch       *stopwatch.Stopwatch
+		TestSummary     Summary             `json:"test_summary"`
+		PkgSummary      Summary             `json:"pkg_summary"`
+		Mod             string              `json:"mod"`
+		Root            string              `json:"root"`
+		Cached          int                 `json:"cached"`
+		Packages        map[string]*Package `json:"packages"`
+		TotalTests      int                 `json:"total_tests"`
+		State           Action              `json:"state"`
+		BuildErrors     []*BuildError       `json:"build_errors,omitempty"`
+		TimeElapsed     time.Duration       `json:"time_elapsed"`
+		StatementCount  int64               `json:"statements"`
+		CoveredCount    int64               `json:"covered"`
+		CoveragePercent float64             `json:"percent"`
+		path            string
+		cfg             *config.Config
+		watch           *stopwatch.Stopwatch
 	}
 	// BuildError captures a single build error in a package
 	BuildError struct {
@@ -70,11 +83,13 @@ type (
 )
 
 // New creates a new setult set
-func New(mod, root string) *Set {
+func New(cfg *config.Config, path string) *Set {
 	return &Set{
+		path:        path,
+		cfg:         cfg,
 		State:       Pass,
-		Mod:         mod,
-		Root:        root,
+		Mod:         cfg.ModName,
+		Root:        cfg.Root,
 		watch:       stopwatch.Start(),
 		Packages:    map[string]*Package{},
 		BuildErrors: []*BuildError{},
@@ -93,7 +108,7 @@ func (set *Set) Parse(data []byte) {
 }
 
 // Complete will mark the set as finished
-func (set *Set) Complete() {
+func (set *Set) Complete() error {
 	set.TimeElapsed = set.watch.Stop()
 	for _, pkg := range set.Packages {
 		for _, test := range pkg.Tests {
@@ -104,18 +119,20 @@ func (set *Set) Complete() {
 			}
 		}
 	}
+	if set.cfg.Cover != "" {
+		if err := set.parseCoverProfile(set.cfg.Cover, set.path); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // Add adds an event line to the setult set
 func (set *Set) Add(action Action, pkgName, testName, output string) {
-	packageName := strings.ReplaceAll(pkgName, set.Mod+"/", "")
-	if packageName == "" {
-		packageName = "<root>"
+	if _, ok := set.Packages[pkgName]; !ok {
+		set.Packages[pkgName] = newPackage(pkgName)
 	}
-	if _, ok := set.Packages[packageName]; !ok {
-		set.Packages[packageName] = newPackage(packageName)
-	}
-	pkg := set.Packages[packageName]
+	pkg := set.Packages[pkgName]
 	if _, ok := pkg.Tests[testName]; testName != "" && !ok {
 		set.TotalTests++
 		pkg.Tests[testName] = newTest(pkg.Name, testName)
@@ -131,7 +148,7 @@ func (set *Set) parseBuildError(data string) {
 	if strings.HasPrefix(data, "# ") {
 		pkg := strings.Split(data, " ")[1]
 		err := &BuildError{
-			Package: strings.TrimPrefix(pkg, set.Mod+"/"),
+			Package: pkg,
 			Lines:   []*BuildErrorLine{},
 		}
 		set.BuildErrors = append(set.BuildErrors, err)
@@ -144,22 +161,64 @@ func (set *Set) parseBuildError(data string) {
 		line := err.Lines[len(err.Lines)-1]
 		line.Want = strings.TrimSpace(strings.TrimPrefix(data, "want "))
 	} else if !strings.HasPrefix(data, "FAIL") && len(set.BuildErrors) > 0 {
-		err := set.BuildErrors[len(set.BuildErrors)-1]
+		buildErr := set.BuildErrors[len(set.BuildErrors)-1]
 		parts := strings.Split(data, ":")
-		lineNum, _ := strconv.Atoi(parts[1])
-		colNum, _ := strconv.Atoi(parts[2])
+		var lineNum, colNum int
+		lineNum, _ = strconv.Atoi(parts[1])
+		var message string
+		if len(parts) <= 3 {
+			message = parts[2]
+		} else if len(parts) > 3 {
+			colNum, _ = strconv.Atoi(parts[2])
+			message = parts[3]
+		}
 		excp := []string{}
 		if file, err := os.Open(parts[0]); err == nil {
 			excp = excerpt.Excerpt(file, lineNum, colNum)
 		}
-		err.Lines = append(err.Lines, &BuildErrorLine{
+		buildErr.Lines = append(buildErr.Lines, &BuildErrorLine{
 			Path:    parts[0],
 			Line:    lineNum,
 			Column:  colNum,
-			Message: parts[3],
+			Message: message,
 			Excerpt: excp,
 		})
 	}
+}
+
+func (set *Set) parseCoverProfile(coverPath, projectdir string) error {
+	projectFiles, err := filesForPath(projectdir)
+	if err != nil {
+		return err
+	}
+	profiles, err := cover.ParseProfiles(coverPath)
+	if err != nil {
+		return err
+	}
+	filePathToProfileMap := make(map[string]*cover.Profile)
+	for _, prof := range profiles {
+		filePathToProfileMap[prof.FileName] = prof
+	}
+	for _, filePath := range projectFiles {
+		pkgs, err := packages.Load(&packages.Config{Mode: packages.NeedName}, filepath.Dir(filePath))
+		if err != nil {
+			return err
+		} else if len(pkgs) > 1 {
+			return fmt.Errorf("expected only 1 package")
+		}
+		profile := filePathToProfileMap[fmt.Sprintf("%v/%v", pkgs[0].PkgPath, filepath.Base(filePath))]
+		if _, ok := set.Packages[pkgs[0].PkgPath]; !ok {
+			continue
+		}
+		pkg := set.Packages[pkgs[0].PkgPath]
+		if err := pkg.fileCoverage(profile, filePath); err != nil {
+			return err
+		}
+		set.StatementCount += pkg.StatementCount
+		set.CoveredCount += pkg.CoveredCount
+	}
+	set.CoveragePercent = calcPercent(set.StatementCount, set.CoveredCount)
+	return nil
 }
 
 // Any will return if there are any tests at all
@@ -226,4 +285,45 @@ func (set *Set) RankedTests(thsethold time.Duration) []*Test {
 		return tests[i].TimeElapsed > tests[j].TimeElapsed
 	})
 	return tests
+}
+
+func filesForPath(dir string) ([]string, error) {
+	base := filepath.Base(dir)
+	if base == "..." {
+		dir = filepath.Dir(dir)
+	}
+	if fi, err := os.Stat(dir); err != nil {
+		return nil, err
+	} else if !fi.IsDir() {
+		return nil, fmt.Errorf("path must be a directory")
+	}
+	recursive := base == "..."
+	files := make([]string, 0)
+	err := filepath.WalkDir(dir, func(path string, info fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		} else if info.IsDir() {
+			if path == dir {
+				return nil
+			} else if !recursive {
+				return filepath.SkipDir
+			}
+		}
+		if regexp.MustCompile(".go$").MatchString(path) {
+			if regexp.MustCompile("_test.go$").MatchString(path) {
+				return nil
+			}
+			path, _ = filepath.Abs(path)
+			files = append(files, path)
+		}
+		return nil
+	})
+	return files, err
+}
+
+func calcPercent(statements, covered int64) float64 {
+	if statements > 0 {
+		return math.Floor((float64(covered)/float64(statements))*10000) / 100
+	}
+	return 0
 }

@@ -53,7 +53,8 @@
 - [x] More Better inputs
   - relative paths prefixed with ./
   - if dir has no tests then suffix with /... nope, just make it not fail
-- [x] go build, install, test
-- [ ] term hotkeys to re-run all
+- [-] go build, install, test
+- [x] term hotkey to re-run all SIGINFO
 - [ ] install test deps if an error happens
-- [ ] go vet output support
+- [ ] go test -vet output support
+- [ ] coverprofile parsing

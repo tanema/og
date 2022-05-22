@@ -65,28 +65,28 @@ const (
 	dotsTemplate = `{{range $pkgname, $pkg := (.Set.FilteredPackages (not $.Cfg.HideEmpty)) -}}
 	{{- range $testname, $test := ($pkg.FilteredTests (not $.Cfg.HideSkip)) -}}
 		{{- if eq $test.State "run" "cont" "pause" -}}
-		{{"●" | faint | cyan}}
+		{{"%v" | faint | cyan}}
 		{{- else if eq $test.State "pass" -}}
-		{{"●" | green}}
+		{{"%v" | green}}
 		{{- else if eq $test.State "fail" -}}
-		{{"●" | red}}
+		{{"%v" | red}}
 		{{- else if eq $test.State "skip" -}}
-		{{"●" | yellow}}
+		{{"%v" | yellow}}
 		{{- end -}}
 	{{- end -}}
 {{- end}}`
 
 	dotsSeparateTemplate = `{{range $pkgname, $pkg := (.Set.FilteredPackages (not $.Cfg.HideEmpty))}}{{"●" | bold}} {{ $pkgname | bold }} {{range $tstname, $test := ($pkg.FilteredTests (not $.Cfg.HideSkip)) -}}
 	{{- if eq $test.State "run" "cont" "pause" -}}
-	{{"●" | faint | cyan}}
+	{{"%v" | faint | cyan}}
 	{{- else if eq $test.State "pass" -}}
-	{{"●" | green}}
+	{{"%v" | green}}
 	{{- else if eq $test.State "fail" -}}
-	{{"●" | red}}
+	{{"%v" | red}}
 	{{- else if eq $test.State "skip" -}}
-	{{"●" | yellow | bold}}
+	{{"%v" | yellow | bold}}
 	{{- end -}}
-{{end}} {{if not $.Cfg.HideElapsed}}({{$pkg.TimeElapsed | cyan}}){{end}}{{if $pkg.Cached}}{{"(cached)" | green}}{{end}}
+{{end}} {{if not $.Cfg.HideElapsed}}({{$pkg.TimeElapsed | cyan}}) {{end}}{{with $pkg.CoveragePercent}}{{.}}%% {{end}}{{if $pkg.Cached}}{{"(cached)" | green}}{{end}}
 {{end}}`
 
 	namesPackageTemplate = `{{range $pkgname, $pkg := (.Set.FilteredPackages (not $.Cfg.HideEmpty)) }}
@@ -94,7 +94,7 @@ const (
 {{- else if eq $pkg.State "pass" -}}{{"PASS" | bgGreen | white}}
 {{- else if eq $pkg.State "fail" -}}{{"FAIL" | bgRed | white}}
 {{- else if eq $pkg.State "skip" -}}{{"NONE" | bgBlue | white}}
-{{- end}} {{$pkgname | bold}} {{if not $.Cfg.HideElapsed}}({{$pkg.TimeElapsed | cyan}}){{end}} {{if $pkg.Cached}}{{"(cached)" | green}}{{end}}
+{{- end}} {{$pkgname | bold}} {{if not $.Cfg.HideElapsed}}({{$pkg.TimeElapsed | cyan}}) {{end}}{{with $pkg.CoveragePercent}}{{.}}% {{end}}{{if $pkg.Cached}}{{"(cached)" | green}}{{end}}
 {{end}}`
 
 	namesTemplate = `{{range $pkgname, $pkg := (.Set.FilteredPackages (not $.Cfg.HideEmpty)) }}{{- range $testname, $test := ($pkg.FilteredTests (not $.Cfg.HideSkip)) -}}
