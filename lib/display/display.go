@@ -13,6 +13,7 @@ var Decorators = map[string]string{
 	"dots":   fmt.Sprintf(dotsTemplate, "●", "●", "●", "●"),
 	"icons":  fmt.Sprintf(dotsTemplate, "?", "✔", "✗", "⚠"),
 	"pdots":  fmt.Sprintf(dotsSeparateTemplate, "●", "●", "●", "●"),
+	"picons": fmt.Sprintf(dotsSeparateTemplate, "?", "✔", "✗", "⚠"),
 	"names":  namesTemplate,
 	"pnames": namesPackageTemplate,
 }
@@ -63,13 +64,15 @@ func (render *Renderer) Summary(set *results.Set) {
 	if len(set.Failures()) > 0 {
 		render.sb.Write(FailLineTemplate+PanicTemplate+TestifyDiffTemplate+TestFailuresTemplate, data)
 	}
-	if len(set.Skips()) > 0 {
+	if !render.cfg.HideSkip && len(set.Skips()) > 0 {
 		render.sb.Write(TestSkipTemplate, data)
 	}
 	if !render.cfg.HideSummary {
 		render.sb.Write(SummaryTemplate, data)
 	}
-	render.sb.Write(`{{"Coverage" | bold}}: {{.Set.CoveragePercent}}%`, data)
+	if render.cfg.Cover != "" {
+		render.sb.Write(`{{"Coverage" | bold}}: {{.Set.CoveragePercent}}%`, data)
+	}
 	if !render.cfg.HideElapsed {
 		render.sb.Write(`{{"Elapsed" | bold}}: {{.Set.TimeElapsed | cyan | bold}}`, data)
 	}

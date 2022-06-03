@@ -15,13 +15,14 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/fsnotify/fsnotify"
 	"github.com/spf13/cobra"
+
 	"github.com/tanema/og/lib/config"
 	"github.com/tanema/og/lib/display"
 	"github.com/tanema/og/lib/find"
 	"github.com/tanema/og/lib/results"
 	"github.com/tanema/og/lib/term"
-	"github.com/tanema/og/lib/watcher"
 )
 
 const (
@@ -60,14 +61,15 @@ Any further go flags can be passed with a -- suffix
 	},
 	Run: func(cmd *cobra.Command, args []string) {
 		if version {
-			printVersion()
+			printVersion(cfg)
 			return
 		}
 		testargs, err := fmtTestArgs(cfg, args...)
 		cobra.CheckErr(err)
-		runCommand(cfg, testargs...)
+		testcmd := runner(cfg)
+		cobra.CheckErr(testcmd(testargs...))
 		if cfg.Watch {
-			watchTestChanges(cfg, args)
+			cobra.CheckErr(watchTestChanges(cfg, testcmd, args))
 		}
 	},
 }
@@ -83,10 +85,8 @@ func init() {
 	rootCmd.Flags().BoolVarP(&cfg.HideElapsed, "hideelapse", "e", false, "hide the elapsed time output")
 	rootCmd.Flags().BoolVarP(&cfg.HideSummary, "hidesummary", "m", false, "hide the complete summary output")
 	rootCmd.Flags().DurationVarP(&cfg.Threshold, "threshold", "r", 5*time.Second, "output lists of tests slower than the threshold. 0 will disable")
-	rootCmd.Flags().BoolVar(&cfg.NoCache, "nocache", false, "disable go test cache")
 	rootCmd.Flags().BoolVar(&cfg.Short, "short", false, "run short tests")
-	rootCmd.Flags().BoolVar(&cfg.Vet, "vet", false, "vet code alone with tests")
-	rootCmd.Flags().BoolVar(&cfg.Race, "race", false, "check for race conditions as well")
+	rootCmd.Flags().BoolVar(&cfg.NoCache, "nocache", false, "disable go test cache")
 	rootCmd.Flags().BoolVar(&cfg.FailFast, "failfast", false, "terminate after first test failure")
 	rootCmd.Flags().BoolVar(&cfg.Shuffle, "shuffle", false, "shuffle test order")
 	rootCmd.Flags().StringVar(&cfg.Cover, "cover", "/tmp/cover.out", "enable coverage and output it to this path")
@@ -108,69 +108,69 @@ func validateDisplay(cfg *config.Config) error {
 	return nil
 }
 
-func runCommand(cfg *config.Config, args ...string) {
-	cmdMut.Lock()
-	defer cmdMut.Unlock()
-	var out io.WriteCloser = cfg.Out
-	var wg sync.WaitGroup
-	cmd := exec.Command(args[0], args[1:]...)
-	cmd.Env = os.Environ()
+func runner(cfg *config.Config) func(...string) error {
 	if cfg.Raw {
-		fmt.Println(term.Sprintf("{{. | cyan}}", strings.Join(args, " ")))
-	} else {
-		r, w := io.Pipe()
-		defer r.Close()
-		go processOutput(cfg, &wg, r, args[len(args)-1])
-		out = w
+		return raw
 	}
-	cmd.Stderr = out
-	cmd.Stdout = out
-	cmd.Run()
-	if !cfg.Raw {
-		out.Close()
-	}
-	wg.Wait()
+	return runCmd
 }
 
-func processOutput(cfg *config.Config, wg *sync.WaitGroup, r io.Reader, path string) {
+func raw(args ...string) error {
+	cmdMut.Lock()
+	defer cmdMut.Unlock()
+	fmt.Println(term.Sprintf("{{. | cyan}}", strings.Join(args, " ")))
+	cmd := exec.Command(args[0], args[1:]...)
+	cmd.Env = os.Environ()
+	cmd.Stderr = os.Stderr
+	cmd.Stdout = os.Stderr
+	return cmd.Run()
+}
+
+func runCmd(args ...string) error {
+	cmdMut.Lock()
+	defer cmdMut.Unlock()
+	var wg sync.WaitGroup
 	wg.Add(1)
-	defer wg.Done()
-	set := results.New(cfg, path)
+	r, w := io.Pipe()
+	defer r.Close()
+
+	set := results.New(cfg, args[len(args)-1])
 	deco := display.New(cfg)
+	cmd := exec.Command(args[0], args[1:]...)
+	cmd.Env = os.Environ()
+	cmd.Stderr = w
+	cmd.Stdout = w
+
 	scanner := bufio.NewScanner(r)
 	scanner.Split(bufio.ScanLines)
-	for scanner.Scan() {
-		set.Parse(scanner.Bytes())
-		deco.Render(set)
+	go func() {
+		for scanner.Scan() {
+			set.Parse(scanner.Bytes())
+			deco.Render(set)
+		}
+		set.Complete()
+		deco.Summary(set)
+		wg.Done()
+	}()
+	if err := scanner.Err(); err != nil {
+		return err
 	}
-	if err := set.Complete(); err != nil {
-		panic(err)
+	cmd.Run()
+	if err := w.Close(); err != nil {
+		return err
 	}
-	deco.Summary(set)
+	wg.Wait()
 	if cfg.Dump {
 		data, err := json.Marshal(set)
 		if err != nil {
-			panic(err)
+			return err
 		}
 		fmt.Println(string(data))
 	}
+	return nil
 }
 
-func onTestEvent(cfg *config.Config) func(string) {
-	return func(path string) {
-		if strings.HasSuffix(path, ".go") && !strings.HasSuffix(path, "_test.go") {
-			path = strings.ReplaceAll(path, ".go", "_test.go")
-		}
-		if _, err := os.Stat(path); err != nil {
-			path = filepath.Dir(path)
-		}
-		path = strings.ReplaceAll(path, cfg.Root, ".")
-		args, _ := fmtTestArgs(cfg, path)
-		runCommand(cfg, args...)
-	}
-}
-
-func watchTestChanges(cfg *config.Config, args []string) {
+func watchTestChanges(cfg *config.Config, tstcmd func(...string) error, args []string) error {
 	fmt.Println(term.Sprintf(`{{"Watching" | bold | bgGreen}} press {{"ctr-t"| blue}} to re-run tests`, nil))
 	testargs, _ := fmtTestArgs(cfg, args...)
 	infoSig := make(chan os.Signal, 1)
@@ -178,14 +178,65 @@ func watchTestChanges(cfg *config.Config, args []string) {
 	go func() {
 		for {
 			<-infoSig
-			term.ClearLines(os.Stdout, 1)
-			runCommand(cfg, testargs...)
+			tstcmd(testargs...)
 		}
 	}()
 	paths, _, _ := find.Paths(args)
-	notifier, err := watcher.New(paths...)
-	cobra.CheckErr(err)
-	notifier.Watch(onTestEvent(cfg))
+
+	fsntfy, err := fsnotify.NewWatcher()
+	if err != nil {
+		return err
+	}
+
+	for _, path := range paths {
+		path, err := filepath.Abs(strings.TrimSuffix(path, "/..."))
+		if err != nil {
+			return err
+		}
+		if err = filepath.Walk(path, func(path string, info os.FileInfo, err error) error {
+			if err != nil {
+				return err
+			} else if info.IsDir() || strings.HasSuffix(path, ".go") {
+				if err := fsntfy.Add(path); err != nil {
+					return err
+				}
+			}
+			return nil
+		}); err != nil {
+			return err
+		}
+	}
+
+	for {
+		select {
+		case event, ok := <-fsntfy.Events:
+			if !ok {
+				return nil
+			}
+			if event.Op&fsnotify.Write == fsnotify.Write && strings.HasSuffix(event.Name, ".go") {
+				if err := onTestEvent(cfg, tstcmd, event.Name); err != nil {
+					return err
+				}
+			}
+		case err := <-fsntfy.Errors:
+			return err
+		}
+	}
+}
+
+func onTestEvent(cfg *config.Config, tstcmd func(...string) error, path string) error {
+	if strings.HasSuffix(path, ".go") && !strings.HasSuffix(path, "_test.go") {
+		path = strings.ReplaceAll(path, ".go", "_test.go")
+	}
+	if _, err := os.Stat(path); err != nil {
+		path = filepath.Dir(path)
+	}
+	path = strings.ReplaceAll(path, cfg.Root, ".")
+	args, err := fmtTestArgs(cfg, path)
+	if err != nil {
+		return err
+	}
+	return tstcmd(args...)
 }
 
 func fmtTestArgs(cfg *config.Config, args ...string) ([]string, error) {
@@ -200,6 +251,6 @@ func fmtTestArgs(cfg *config.Config, args ...string) ([]string, error) {
 	return append(testArgs, paths...), nil
 }
 
-func printVersion() {
-	fmt.Println(term.Sprintf("{{. | rainbow}}", fmt.Sprintf("og%v.%v\t%v", major, minor, runtime.Version())))
+func printVersion(cfg *config.Config) {
+	fmt.Fprintln(cfg.Out, term.Sprintf("{{. | Rainbow}}", fmt.Sprintf("og%v.%v\t%v", major, minor, runtime.Version())))
 }

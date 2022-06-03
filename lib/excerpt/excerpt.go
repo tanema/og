@@ -26,7 +26,7 @@ func Excerpt(r io.Reader, line, col int) []string {
 			lineNum := leftPad(strconv.Itoa(curline), digitCount)
 			if curline == line {
 				out = append(out, term.Sprintf(
-					"{{index . 0 | bold}}  {{index . 1 | bold}}{{index . 2 | bold | bgRed}}{{index . 3 | bold}}",
+					"{{index . 0 | bold}}  {{index . 1 | bold}}{{index . 2 | bold | Red}}{{index . 3 | bold}}",
 					[]string{lineNum, text[:max(0, col-1)], text[max(0, col-1):col], text[col:]},
 				))
 			} else {

@@ -21,14 +21,12 @@ func TestArgs(t *testing.T) {
 	cfg := &Config{
 		NoCache:  true,
 		Short:    true,
-		Vet:      true,
-		Race:     true,
 		FailFast: true,
 		Shuffle:  true,
 		Cover:    "file.out",
 	}
 	assert.Equal(t, []string{"go", "test", "-json", "-v",
-		"-count=1", "-short", "-vet", "all", "-race", "-failfast", "-shuffle",
+		"-count=1", "-short", "-failfast", "-shuffle",
 		"on", "-covermode", "atomic", "-coverprofile", "file.out",
 	}, cfg.TestArgs())
 }

@@ -1,6 +1,8 @@
 package display
 
 const (
+	DumpTemplate = `{{define "line"}}{{range .Dump}}{{.}}{{end}}{{end}}`
+
 	BuildErrorsTemplate = `{{"Build Errors"| magenta | bold}}:{{range .Set.BuildErrors}}
 {{.Package}} {{range .Lines}}
   {{.Path | cyan}}:{{.Line | bold}}:{{.Column | bold}} {{.Message | magenta}}{{if ne .Have ""}}
@@ -8,10 +10,16 @@ const (
     Actual  : {{.Have | red}}{{- end}}{{if and (gt (len .Excerpt) 0) (not $.Cfg.HideExcerpts)}}{{range .Excerpt}}
     {{.}}{{end}}{{end}}
 {{- end}}{{end}}`
+	FailLineTemplate = `{{define "line"}}{{if ne .File ""}}{{.File | cyan}}:{{.Line |bold}}{{end}} {{if eq (len .Messages) 1 -}}
+    {{index .Messages 0}}
+{{- else -}}
+{{range .Messages}}
+    {{.}}
+{{- end -}}
+{{- end -}}
+{{- end}}`
 
-	FailLineTemplate = `{{define "line"}}{{.File | cyan}}:{{.Line |bold}} {{range .Messages}}{{.}}{{end}}{{end}}`
-
-	PanicTemplate = `{{define "panic"}}{{"Panic" | bold | bgRed}} {{index .Messages 0 | red}}{{range .PanicTrace}}
+	PanicTemplate = `{{define "panic"}}{{"Panic" | bold | Red}} {{index .Messages 0 | red}}{{range .PanicTrace}}
       {{.Path | cyan}}:{{.Line | bold}}:{{.Fn}}{{end}}{{end}}`
 
 	TestifyDiffTemplate = `{{define "diff"}}{{.File | cyan}}:{{.Line |bold}} {{.Diff.Error | red}}
@@ -34,12 +42,13 @@ const (
 	TestFailuresTemplate = `{{"Failed Tests"| red | bold}}: {{range $pkgName, $tests := .Set.Failures }}
 {{- range $tstName, $failures := $tests}}
 {{$pkgName}}#{{$tstName}}:
-  {{- if and (and (eq (len $failures) 1) (not (index $failures 0).Diff) (not (index $failures 0).IsPanic))}} {{template "line" (index $failures 0)}}
+  {{- if and (and (eq (len $failures) 1) (not (index $failures 0).Diff) (not (index $failures 0).IsPanic))}}{{template "line" (index $failures 0)}}
   {{- else}}{{range $failures}}{{if .Diff}}
   {{template "diff" .}}{{else if .IsPanic}}
   {{template "panic" .}}{{else}}
   {{template "line" .}}{{end}}
-  {{- end -}}{{end}}
+  {{- end -}}
+  {{- end -}}
   {{- end -}}
 {{- end}}`
 
@@ -90,18 +99,18 @@ const (
 {{end}}`
 
 	namesPackageTemplate = `{{range $pkgname, $pkg := (.Set.FilteredPackages (not $.Cfg.HideEmpty)) }}
-{{- if eq $pkg.State "run" "cont" "pause" -}}{{"RUN " | faint | bgCyan | white}}
-{{- else if eq $pkg.State "pass" -}}{{"PASS" | bgGreen | white}}
-{{- else if eq $pkg.State "fail" -}}{{"FAIL" | bgRed | white}}
-{{- else if eq $pkg.State "skip" -}}{{"NONE" | bgBlue | white}}
+{{- if eq $pkg.State "run" "cont" "pause" -}}{{"RUN " | faint | Cyan | white}}
+{{- else if eq $pkg.State "pass" -}}{{"PASS" | Green | white | bold}}
+{{- else if eq $pkg.State "fail" -}}{{"FAIL" | Red | white | bold}}
+{{- else if eq $pkg.State "skip" -}}{{"NONE" | Blue | white | bold}}
 {{- end}} {{$pkgname | bold}} {{if not $.Cfg.HideElapsed}}({{$pkg.TimeElapsed | cyan}}) {{end}}{{with $pkg.CoveragePercent}}{{.}}% {{end}}{{if $pkg.Cached}}{{"(cached)" | green}}{{end}}
 {{end}}`
 
 	namesTemplate = `{{range $pkgname, $pkg := (.Set.FilteredPackages (not $.Cfg.HideEmpty)) }}{{- range $testname, $test := ($pkg.FilteredTests (not $.Cfg.HideSkip)) -}}
-{{- if eq $test.State "run" "cont" "pause" -}}{{"RUN " | faint | bgCyan | white}}
-{{- else if eq $test.State "pass" -}}{{"PASS" | bgGreen | white}}
-{{- else if eq $test.State "fail" -}}{{"FAIL" | bgRed | white}}
-{{- else if eq $test.State "skip" -}}{{"NONE" | bgBlue | white}}
+{{- if eq $test.State "run" "cont" "pause" -}}{{"RUN " | faint | Cyan | white}}
+{{- else if eq $test.State "pass" -}}{{"PASS" | Green | white | bold}}
+{{- else if eq $test.State "fail" -}}{{"FAIL" | Red | white | bold}}
+{{- else if eq $test.State "skip" -}}{{"NONE" | Blue | white | bold}}
 {{- end}} {{$pkgname | bold}}=>{{$testname}} {{if not $.Cfg.HideElapsed}}({{$pkg.TimeElapsed | cyan}}){{end}}
 {{end}}{{end}}`
 )

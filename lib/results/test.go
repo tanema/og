@@ -100,7 +100,6 @@ func (test *Test) addLogOutput(mod, root, msg string) {
 		if strings.TrimSpace(filepathMatches[3]) != "" {
 			msg = append(msg, filepathMatches[3])
 		}
-
 		test.Failures = append(test.Failures, &Failure{
 			Name:     test.Name,
 			Package:  test.Package,
@@ -135,6 +134,12 @@ func (test *Test) addLogOutput(mod, root, msg string) {
 			}
 			failure.Messages = append(failure.Messages, strings.TrimSpace(msg))
 		}
+	} else {
+		test.Failures = append(test.Failures, &Failure{
+			Name:     test.Name,
+			Package:  test.Package,
+			Messages: []string{msg},
+		})
 	}
 }
 

@@ -1,7 +1,7 @@
 //go:build darwin && amd64
 // +build darwin,amd64
 
-package watcher
+package cmd
 
 import (
 	"math"
@@ -11,7 +11,7 @@ import (
 const minFileDescriptors float64 = 2048
 
 // MacOSX sets a very low default file descriptor limit per process.
-//This function sets file descriptor limits to a more sane value.
+// This function sets file descriptor limits to a more sane value.
 func init() {
 	var rLimit syscall.Rlimit
 	if err := syscall.Getrlimit(syscall.RLIMIT_NOFILE, &rLimit); err != nil {

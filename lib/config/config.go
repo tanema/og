@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/tanema/og/lib/mod"
+	"github.com/tanema/og/lib/find"
 )
 
 const configPath = "$HOME/.config/og.json"
@@ -30,8 +30,6 @@ type Config struct {
 	Watch           bool
 	NoCache         bool
 	Short           bool
-	Vet             bool
-	Race            bool
 	FailFast        bool
 	Shuffle         bool
 	Raw             bool
@@ -63,7 +61,7 @@ func (config *Config) Load() error {
 
 func (config *Config) findRoot() {
 	config.Root, _ = filepath.Abs("./")
-	module, err := mod.Get("./")
+	module, err := find.Mod("./")
 	if err != nil {
 		config.ModName = config.Root
 	} else {
@@ -82,12 +80,6 @@ func (config *Config) TestArgs() []string {
 	}
 	if config.Short {
 		testArgs = append(testArgs, "-short")
-	}
-	if config.Vet {
-		testArgs = append(testArgs, "-vet", "all")
-	}
-	if config.Race {
-		testArgs = append(testArgs, "-race")
 	}
 	if config.FailFast {
 		testArgs = append(testArgs, "-failfast")

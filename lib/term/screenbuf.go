@@ -21,75 +21,134 @@ const (
 	defaultTermWidth  = 80
 	defaultTermHeight = 60
 
+	bold             = "1"
+	faint            = "2"
+	italic           = "3"
+	underline        = "4"
+	invert           = "7"
+	fg               = "3"
+	bg               = "4"
+	brfg             = "9"
+	brbg             = "10"
+	black            = "0"
+	red              = "1"
+	green            = "2"
+	yellow           = "3"
+	blue             = "4"
+	magenta          = "5"
+	cyan             = "6"
+	white            = "7"
 	esc              = "\033["
-	color            = esc + "%vm"
-	clearColor       = esc + "0m"
+	rgbfgcolor       = esc + fg + "8;5;%vm"
+	rgbbgcolor       = esc + bg + "8;5;%vm"
+	truefgcolor      = esc + fg + "8;2;%v;%v;%vm"
+	truebgcolor      = esc + bg + "8;2;%v;%v;%vm"
 	cursorToStart    = esc + "0G"
 	cursorUpOne      = esc + "1A"
 	clearToEndOfLine = esc + "0K"
 	clearLastLine    = cursorToStart + cursorUpOne + clearToEndOfLine
 )
 
-var ansiPat = regexp.MustCompile(`\033(\[\d+[mKAG])?`)
-
+var rainbowColors = []string{brfg + red, brfg + yellow, brfg + green, brfg + blue, brfg + cyan, brfg + magenta}
+var ansiPat = regexp.MustCompile(`\033\[(\d*[mKAG])?`)
 var funcMap = template.FuncMap{
 	"rainbow":   rainbow,
-	"bold":      styler("1"),
-	"faint":     styler("2"),
-	"italic":    styler("3"),
-	"underline": styler("4"),
-	"black":     styler("30"),
-	"red":       styler("31"),
-	"green":     styler("32"),
-	"yellow":    styler("33"),
-	"magenta":   styler("35"),
-	"cyan":      styler("36"),
-	"bgBlack":   styler("40"),
-	"bgRed":     styler("41"),
-	"bgGreen":   styler("42"),
-	"bgYellow":  styler("43"),
-	"bgBlue":    styler("44"),
-	"bgMagenta": styler("45"),
-	"bgCyan":    styler("46"),
-	"bgWhite":   styler("47"),
-	"blue":      styler("94"),
-	"white":     styler("97"),
+	"Rainbow":   bgRainbow,
+	"bright":    bright,
+	"Bright":    bgBright,
+	"bold":      styler(bold),
+	"faint":     styler(faint),
+	"italic":    styler(italic),
+	"underline": styler(underline),
+	"invert":    styler(invert),
+	"black":     styler(fg + black),
+	"red":       styler(fg + red),
+	"green":     styler(fg + green),
+	"yellow":    styler(fg + yellow),
+	"blue":      styler(fg + blue),
+	"magenta":   styler(fg + magenta),
+	"cyan":      styler(fg + cyan),
+	"white":     styler(fg + white),
+	"Black":     styler(bg + black),
+	"Red":       styler(bg + red),
+	"Green":     styler(bg + green),
+	"Yellow":    styler(bg + yellow),
+	"Blue":      styler(bg + blue),
+	"Magenta":   styler(bg + magenta),
+	"Cyan":      styler(bg + cyan),
+	"White":     styler(bg + white),
+}
+
+type ansiStr struct {
+	str  string
+	vals []string
+}
+
+func parseAnsiString(str string) ansiStr {
+	ansipat := regexp.MustCompile(`^\\033\[(\d*;?)+m`)
+	points := []string{}
+	if ansipat.MatchString(str) {
+		ansiCmd := ansipat.FindString(str)
+		str = strings.TrimRight(ansipat.ReplaceAllString(str, ""), "\033[m")
+		points = append(points, strings.Split(strings.TrimRight(strings.TrimLeft(ansiCmd, `\033[`), "m"), ";")...)
+	}
+	return ansiStr{str: str, vals: points}
+}
+
+func (ansi *ansiStr) add(a string) {
+	ansi.vals = append(ansi.vals, a)
+}
+
+func (ansi *ansiStr) replace(before, after string) {
+	for i, val := range ansi.vals {
+		if strings.HasPrefix(val, before) && len(val) > len(before) {
+			ansi.vals[i] = strings.Replace(val, before, after, 1)
+			break
+		}
+	}
+}
+
+func (ansi ansiStr) String() string {
+	return fmt.Sprintf("\033[%vm%v\033[m", strings.Join(ansi.vals, ";"), ansi.str)
 }
 
 func styler(attr string) func(interface{}) string {
 	return func(v interface{}) string {
-		s, ok := v.(string)
-		if ok && s == ">>" {
-			return fmt.Sprintf(color, attr)
-		}
-		return fmt.Sprintf(color+"%v"+clearColor, attr, v)
+		ansistr := parseAnsiString(fmt.Sprintf("%v", v))
+		ansistr.add(attr)
+		return ansistr.String()
 	}
 }
 
-func rainbow(v interface{}) string {
-	s := v.(string)
-	chunks := make([]string, len(s))
-	colors := []string{"31", "33", "32", "94", "36", "35"}
-	for i, chr := range s {
-		attr := colors[i%len(colors)]
-		chunks[i] = fmt.Sprintf(color+"%c"+clearColor, attr, chr)
+func bright(v interface{}) string {
+	ansistr := parseAnsiString(fmt.Sprintf("%v", v))
+	ansistr.replace(fg, brfg)
+	return ansistr.String()
+}
+
+func bgBright(v interface{}) string {
+	ansistr := parseAnsiString(fmt.Sprintf("%v", v))
+	ansistr.replace(bg, brbg)
+	return ansistr.String()
+}
+
+func rainbow(v string) string {
+	chunks := make([]string, len(v))
+	for i, chr := range v {
+		chunks[i] = fmt.Sprintf("\033[%vm%c\033[m", rainbowColors[i%len(rainbowColors)], chr)
 	}
 	return strings.Join(chunks, "")
 }
 
-// Width returns the column width of the terminal
-func Width() int {
-	w, _ := size()
-	return w
+func bgRainbow(v string) string {
+	chunks := make([]string, len(v))
+	for i, chr := range v {
+		chunks[i] = fmt.Sprintf("\033[%v;7m%c\033[m", rainbowColors[i%len(rainbowColors)], chr)
+	}
+	return strings.Join(chunks, "")
 }
 
-// Height returns the row size of the terminal
-func Height() int {
-	_, h := size()
-	return h
-}
-
-func size() (width, height int) {
+func Size() (width, height int) {
 	cmd := exec.Command("stty", "size")
 	cmd.Stdin = os.Stdin
 	out, err := cmd.Output()
@@ -174,7 +233,8 @@ func (s *ScreenBuf) Render(in string, data interface{}) {
 func (s *ScreenBuf) Write(in string, data interface{}) {
 	s.mut.Lock()
 	defer s.mut.Unlock()
-	tmpl := wrap(renderStringTemplate(in, data), Width())
+	width, _ := Size()
+	tmpl := wrap(renderStringTemplate(in, data), width)
 	if len(tmpl) > 0 && tmpl[len(tmpl)-1] != '\n' {
 		tmpl = append(tmpl, '\n')
 	}

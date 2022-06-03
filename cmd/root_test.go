@@ -1,6 +1,9 @@
 package cmd
 
 import (
+	"bytes"
+	"fmt"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -9,7 +12,20 @@ import (
 	"github.com/tanema/og/lib/config"
 	"github.com/tanema/og/lib/display"
 	"github.com/tanema/og/lib/find"
+	"github.com/tanema/og/lib/term"
 )
+
+type strWCr struct {
+	*bytes.Buffer
+}
+
+func newStrWCr() *strWCr {
+	return &strWCr{bytes.NewBufferString("")}
+}
+
+func (str *strWCr) Close() error {
+	return nil
+}
 
 func TestValidateDisplay(t *testing.T) {
 	t.Run("validate that the display is valid", func(t *testing.T) {
@@ -53,7 +69,7 @@ func TestFmtArgs(t *testing.T) {
 
 	t.Run("filepaths with numbers", func(t *testing.T) {
 		cfg := &config.Config{}
-		args, err := fmtTestArgs(cfg, "./root_test.go:20")
+		args, err := fmtTestArgs(cfg, "./root_test.go:30")
 		assert.Nil(t, err)
 		assert.Equal(t, []string{"go", "test", "-json", "-v", "-run", "TestValidateDisplay", "./."}, args)
 	})
@@ -78,4 +94,11 @@ func TestFmtArgs(t *testing.T) {
 		assert.Nil(t, err)
 		assert.Equal(t, []string{"go", "test", "-json", "-v", "-count=1", "./..."}, args)
 	})
+}
+
+func TestPrintVersion(t *testing.T) {
+	buf := newStrWCr()
+	printVersion(&config.Config{Out: buf})
+	expected := term.Sprintf("{{. | Rainbow}}\n", fmt.Sprintf("og%v.%v\t%v", major, minor, runtime.Version()))
+	assert.Equal(t, expected, buf.String())
 }

@@ -1,4 +1,4 @@
-package mod
+package find
 
 import (
 	"errors"
@@ -11,7 +11,8 @@ import (
 	"golang.org/x/mod/modfile"
 )
 
-func Get(curDir string) (*modfile.Module, error) {
+// Mod will find the module for a directory by searching upward for a go.mod file
+func Mod(curDir string) (*modfile.Module, error) {
 	curDir, _ = filepath.Abs(strings.TrimSuffix(curDir, "/..."))
 	fileParts := strings.Split(curDir, string(filepath.Separator))
 	for i := len(fileParts) - 1; i >= 1; i-- {

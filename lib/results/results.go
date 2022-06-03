@@ -112,6 +112,9 @@ func (set *Set) Complete() error {
 	set.TimeElapsed = set.watch.Stop()
 	for _, pkg := range set.Packages {
 		for _, test := range pkg.Tests {
+			if test.State == Continue || test.State == Pause || test.State == Run {
+				test.State = Fail
+			}
 			if test.State == Fail {
 				for _, fail := range test.Failures {
 					fail.format()
@@ -182,6 +185,10 @@ func (set *Set) parseBuildError(data string) {
 			Column:  colNum,
 			Message: message,
 			Excerpt: excp,
+		})
+	} else {
+		set.BuildErrors = append(set.BuildErrors, &BuildError{
+			Lines: []*BuildErrorLine{{Message: data}},
 		})
 	}
 }

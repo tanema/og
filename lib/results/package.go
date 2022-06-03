@@ -49,16 +49,20 @@ func (pkg *Package) result(set *Set, action Action, output string) {
 	case Continue:
 		pkg.watch.Resume()
 	case Output:
-		if strings.HasPrefix(output, "ok") && strings.Contains(output, "(cached)") {
-			set.Cached++
-			pkg.Cached = true
-		}
+		pkg.addLogOutput(set, output)
 	}
 	if action != Output {
 		pkg.State = action
 	}
 	if action == Pass || action == Fail || action == Skip {
 		pkg.TimeElapsed = pkg.watch.Stop()
+	}
+}
+
+func (pkg *Package) addLogOutput(set *Set, msg string) {
+	if strings.HasPrefix(msg, "ok") && strings.Contains(msg, "(cached)") {
+		set.Cached++
+		pkg.Cached = true
 	}
 }
 

@@ -22,9 +22,9 @@ exit()
 
 func TestExcerpt(t *testing.T) {
 	expected := []string{
-		"5  \x1b[2mfunc test(param)\x1b[0m",
-		"\x1b[1m6\x1b[0m  \x1b[1m \x1b[0m\x1b[41m\x1b[1m \x1b[0m\x1b[0m\x1b[1mprint(param)\x1b[0m",
-		"7  \x1b[2mend\x1b[0m",
+		"5  \x1b[2mfunc test(param)\x1b[m",
+		"\x1b[1m6\x1b[m  \x1b[1m \x1b[m\x1b[41m\x1b[1m \x1b[m\x1b[m\x1b[1mprint(param)\x1b[m",
+		"7  \x1b[2mend\x1b[m",
 	}
 	assert.Equal(t, expected, Excerpt(strings.NewReader(input), 6, 2))
 }
