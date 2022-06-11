@@ -58,7 +58,7 @@ func (render *Renderer) Summary(set *results.Set) {
 		render.sb.Write(BuildErrorsTemplate, data)
 	}
 	if !set.Any() {
-		render.sb.Write(`{{"No Tests"| bold | bgBlue}} {{.Mod | bold}}/({{len .Packages | cyan}})`, set)
+		render.sb.Write(`{{"No Tests"| bold | Blue}} {{.Mod | bold}}/({{len .Packages | cyan}})`, set)
 		return
 	}
 	if len(set.Failures()) > 0 {

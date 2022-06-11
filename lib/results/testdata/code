@@ -1,0 +1,11 @@
+// This is for the test
+
+a = 1
+
+func test(param)
+  print(param)
+end
+
+a = 42
+
+exit()

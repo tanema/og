@@ -5,11 +5,13 @@ const (
 
 	BuildErrorsTemplate = `{{"Build Errors"| magenta | bold}}:{{range .Set.BuildErrors}}
 {{.Package}} {{range .Lines}}
-  {{.Path | cyan}}:{{.Line | bold}}:{{.Column | bold}} {{.Message | magenta}}{{if ne .Have ""}}
+{{if ne .Path ""}}{{.Path | cyan}}:{{.Line | bold}}:{{.Column | bold}}{{end}} {{.Message | magenta}}{{if ne .Have ""}}
     Expected: {{.Want | green}}
-    Actual  : {{.Have | red}}{{- end}}{{if and (gt (len .Excerpt) 0) (not $.Cfg.HideExcerpts)}}{{range .Excerpt}}
-    {{.}}{{end}}{{end}}
-{{- end}}{{end}}`
+    Actual  : {{.Have | red}}{{- end}}{{if not $.Cfg.HideExcerpts}}{{with .Excerpt}}
+    {{with .Before}}{{.Line}}  {{.Code | faint}}{{end}}
+    {{with .Highlight}}{{.Line}}  {{.Prefix | bold}}{{.Highlight | bold | Red}}{{.Suffix | bold}}{{end}}
+    {{with .After}}{{.Line}}  {{.Code | faint}}{{end}}{{end}}{{end}}{{end}}{{end}}`
+
 	FailLineTemplate = `{{define "line"}}{{if ne .File ""}}{{.File | cyan}}:{{.Line |bold}}{{end}} {{if eq (len .Messages) 1 -}}
     {{index .Messages 0}}
 {{- else -}}
@@ -113,4 +115,12 @@ const (
 {{- else if eq $test.State "skip" -}}{{"NONE" | Blue | white | bold}}
 {{- end}} {{$pkgname | bold}}=>{{$testname}} {{if not $.Cfg.HideElapsed}}({{$pkg.TimeElapsed | cyan}}){{end}}
 {{end}}{{end}}`
+
+	VersionTemplate = `{{.Pad | Red}}
+{{.Pad | Yellow}}
+{{.OgVersion | black | Green}}
+{{.GoVersion | white | Blue}}
+{{.Pad | Cyan}}
+{{"This tool is actually gay" | magenta | Magenta}}
+`
 )

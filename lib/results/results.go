@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/tanema/og/lib/config"
-	"github.com/tanema/og/lib/excerpt"
 	"github.com/tanema/og/lib/stopwatch"
 	"golang.org/x/tools/cover"
 	"golang.org/x/tools/go/packages"
@@ -66,13 +65,12 @@ type (
 	}
 	// BuildErrorLine is part of the build error trace
 	BuildErrorLine struct {
-		Path    string   `json:"path"`
-		Line    int      `json:"line"`
-		Column  int      `json:"column"`
-		Have    string   `json:"have"`
-		Want    string   `json:"want"`
-		Message string   `json:"message"`
-		Excerpt []string `json:"excerpt"`
+		Path    string `json:"path"`
+		Line    int    `json:"line"`
+		Column  int    `json:"column"`
+		Have    string `json:"have"`
+		Want    string `json:"want"`
+		Message string `json:"message"`
 	}
 	logLine struct {
 		Package string
@@ -102,8 +100,6 @@ func (set *Set) Parse(data []byte) {
 	line := &logLine{}
 	if err := json.Unmarshal(data, &line); err == nil {
 		set.Add(line.Action, line.Package, line.Test, line.Output)
-	} else {
-		set.parseBuildError(string(data))
 	}
 }
 
@@ -122,7 +118,7 @@ func (set *Set) Complete() error {
 			}
 		}
 	}
-	if set.cfg.Cover != "" {
+	if set.cfg.Cover != "" && len(set.Packages) > 0 {
 		if err := set.parseCoverProfile(set.cfg.Cover, set.path); err != nil {
 			return err
 		}
@@ -147,7 +143,7 @@ func (set *Set) Add(action Action, pkgName, testName, output string) {
 	}
 }
 
-func (set *Set) parseBuildError(data string) {
+func (set *Set) ParseError(data string) {
 	if strings.HasPrefix(data, "# ") {
 		pkg := strings.Split(data, " ")[1]
 		err := &BuildError{
@@ -165,32 +161,57 @@ func (set *Set) parseBuildError(data string) {
 		line.Want = strings.TrimSpace(strings.TrimPrefix(data, "want "))
 	} else if !strings.HasPrefix(data, "FAIL") && len(set.BuildErrors) > 0 {
 		buildErr := set.BuildErrors[len(set.BuildErrors)-1]
-		parts := strings.Split(data, ":")
-		var lineNum, colNum int
-		lineNum, _ = strconv.Atoi(parts[1])
-		var message string
-		if len(parts) <= 3 {
-			message = parts[2]
-		} else if len(parts) > 3 {
-			colNum, _ = strconv.Atoi(parts[2])
-			message = parts[3]
-		}
-		excp := []string{}
-		if file, err := os.Open(parts[0]); err == nil {
-			excp = excerpt.Excerpt(file, lineNum, colNum)
-		}
+		lineNum, colNum, message, path := parseFileLine(data)
 		buildErr.Lines = append(buildErr.Lines, &BuildErrorLine{
-			Path:    parts[0],
+			Path:    path,
 			Line:    lineNum,
 			Column:  colNum,
 			Message: message,
-			Excerpt: excp,
 		})
 	} else {
+		lineNum, colNum, message, path := parseFileLine(data)
+		pkgPath, _ := getFilePackage(path)
 		set.BuildErrors = append(set.BuildErrors, &BuildError{
-			Lines: []*BuildErrorLine{{Message: data}},
+			Package: pkgPath,
+			Lines: []*BuildErrorLine{{
+				Path:    path,
+				Line:    lineNum,
+				Column:  colNum,
+				Message: message,
+			}},
 		})
 	}
+}
+
+func parseFileLine(data string) (int, int, string, string) {
+	var lineNum, colNum int
+	var message, path string
+	parts := strings.Split(data, ":")
+	switch len(parts) {
+	case 1:
+		message = parts[0]
+	case 2:
+		path = parts[0]
+		message = parts[1]
+	case 3:
+		path = parts[0]
+		lineNum, _ = strconv.Atoi(parts[1])
+		message = parts[2]
+	case 4:
+		colNum, _ = strconv.Atoi(parts[2])
+		message = parts[3]
+	}
+	return lineNum, colNum, message, path
+}
+
+func getFilePackage(filePath string) (string, error) {
+	pkgs, err := packages.Load(&packages.Config{Mode: packages.NeedName}, filepath.Dir(filePath))
+	if err != nil {
+		return "", err
+	} else if len(pkgs) > 1 {
+		return "", fmt.Errorf("expected only 1 package")
+	}
+	return pkgs[0].PkgPath, nil
 }
 
 func (set *Set) parseCoverProfile(coverPath, projectdir string) error {
@@ -207,17 +228,15 @@ func (set *Set) parseCoverProfile(coverPath, projectdir string) error {
 		filePathToProfileMap[prof.FileName] = prof
 	}
 	for _, filePath := range projectFiles {
-		pkgs, err := packages.Load(&packages.Config{Mode: packages.NeedName}, filepath.Dir(filePath))
+		pkgPath, err := getFilePackage(filePath)
 		if err != nil {
 			return err
-		} else if len(pkgs) > 1 {
-			return fmt.Errorf("expected only 1 package")
 		}
-		profile := filePathToProfileMap[fmt.Sprintf("%v/%v", pkgs[0].PkgPath, filepath.Base(filePath))]
-		if _, ok := set.Packages[pkgs[0].PkgPath]; !ok {
+		profile := filePathToProfileMap[fmt.Sprintf("%v/%v", pkgPath, filepath.Base(filePath))]
+		if _, ok := set.Packages[pkgPath]; !ok {
 			continue
 		}
-		pkg := set.Packages[pkgs[0].PkgPath]
+		pkg := set.Packages[pkgPath]
 		if err := pkg.fileCoverage(profile, filePath); err != nil {
 			return err
 		}

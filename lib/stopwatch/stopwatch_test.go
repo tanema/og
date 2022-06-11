@@ -13,6 +13,7 @@ func TestStopwatch(t *testing.T) {
 	assert.True(t, watch.paused)
 	assert.True(t, watch.Paused())
 	watch.Resume()
+	watch.Resume()
 	assert.False(t, watch.paused)
 	assert.False(t, watch.Paused())
 	dur := watch.Stop()

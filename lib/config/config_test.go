@@ -13,20 +13,9 @@ func TestLoad(t *testing.T) {
 
 func TestFindRoot(t *testing.T) {
 	cfg := &Config{}
-	cfg.findRoot()
+	cfg.findRoot("./")
 	assert.Equal(t, "github.com/tanema/og", cfg.ModName)
-}
 
-func TestArgs(t *testing.T) {
-	cfg := &Config{
-		NoCache:  true,
-		Short:    true,
-		FailFast: true,
-		Shuffle:  true,
-		Cover:    "file.out",
-	}
-	assert.Equal(t, []string{"go", "test", "-json", "-v",
-		"-count=1", "-short", "-failfast", "-shuffle",
-		"on", "-covermode", "atomic", "-coverprofile", "file.out",
-	}, cfg.TestArgs())
+	cfg.findRoot("/tmp")
+	assert.Equal(t, cfg.Root, cfg.ModName)
 }

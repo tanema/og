@@ -4,19 +4,19 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
-	"github.com/tanema/og/lib/find"
+	"golang.org/x/mod/modfile"
 )
 
 const configPath = "$HOME/.config/og.json"
 
 // Config captures running config from flags and global config
 type Config struct {
-	Out             io.WriteCloser
+	Out             io.Writer
 	Root            string
 	ModName         string
 	Display         string        `json:"display"`
@@ -32,7 +32,6 @@ type Config struct {
 	Short           bool
 	FailFast        bool
 	Shuffle         bool
-	Raw             bool
 	Dump            bool
 	Cover           string
 }
@@ -40,55 +39,33 @@ type Config struct {
 // Load will load global config from config path
 func (config *Config) Load() error {
 	config.Out = os.Stderr
-	config.findRoot()
+	config.findRoot("./")
 	path := os.ExpandEnv(configPath)
 	if info, err := os.Stat(path); err != nil || info.IsDir() {
 		return nil
 	}
-	file, err := os.Open(path)
-	if err != nil {
-		return nil
-	}
-	data, err := ioutil.ReadAll(file)
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return fmt.Errorf("cannot read config file: %v", err)
 	}
-	if err := json.Unmarshal(data, config); err != nil {
-		return fmt.Errorf("malformed config: %v", err)
-	}
-	return nil
+	return json.Unmarshal(data, config)
 }
 
-func (config *Config) findRoot() {
-	config.Root, _ = filepath.Abs("./")
-	module, err := find.Mod("./")
-	if err != nil {
-		config.ModName = config.Root
-	} else {
-		config.ModName = module.Mod.Path
+func (config *Config) findRoot(curPath string) {
+	config.Root, _ = filepath.Abs(curPath)
+	fileParts := strings.Split(config.Root, string(filepath.Separator))
+	for i := len(fileParts) - 1; i >= 1; i-- {
+		path := strings.Join(append(fileParts[:i+1], "go.mod"), string(filepath.Separator))
+		data, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		mfile, err := modfile.ParseLax(path, data, nil)
+		if err != nil {
+			break
+		}
+		config.ModName = mfile.Module.Mod.Path
+		return
 	}
-}
-
-// TestArgs formats go test args for use on the command
-func (config *Config) TestArgs() []string {
-	testArgs := []string{"go", "test"}
-	if !config.Raw {
-		testArgs = append(testArgs, "-json", "-v")
-	}
-	if config.NoCache {
-		testArgs = append(testArgs, "-count=1")
-	}
-	if config.Short {
-		testArgs = append(testArgs, "-short")
-	}
-	if config.FailFast {
-		testArgs = append(testArgs, "-failfast")
-	}
-	if config.Shuffle {
-		testArgs = append(testArgs, "-shuffle", "on")
-	}
-	if config.Cover != "" {
-		testArgs = append(testArgs, "-covermode", "atomic", "-coverprofile", config.Cover)
-	}
-	return testArgs
+	config.ModName = config.Root
 }

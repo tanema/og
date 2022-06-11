@@ -1,20 +1,65 @@
 package term
 
 import (
+	"bytes"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 )
 
-func TestFuncMap(t *testing.T) {
-	str := parseAnsiString("hello")
-	str.add(fg + white)
-	assert.Equal(t, esc+fg+white+"mhello"+esc+"m", str.String())
-	str.add(bold)
-	assert.Equal(t, esc+fg+white+";"+bold+"mhello"+esc+"m", str.String())
-	str.replace(fg, brfg)
-	assert.Equal(t, esc+brfg+white+";"+bold+"mhello"+esc+"m", str.String())
-	str = parseAnsiString("hello" + str.String())
-	str.add(bg + green)
-	assert.Equal(t, esc+bg+green+"mhello"+esc+brfg+white+";"+bold+"mhello"+esc+"m"+esc+"m", str.String())
+func TestSprintf(t *testing.T) {
+	actual := Sprintf(`{{"Hello" | green}}`, nil)
+	assert.Equal(t, "\033[32mHello\033[m\n", actual)
+}
+
+func TestFprintf(t *testing.T) {
+	var buf bytes.Buffer
+	err := Fprintf(&buf, `{{"Hello" | green}}`, nil)
+	assert.Nil(t, err)
+	assert.Equal(t, "\033[32mHello\033[m\n", buf.String())
+}
+
+func TestScreenBufRender(t *testing.T) {
+	var buf bytes.Buffer
+	screen := NewScreenBuf(&buf)
+	err := screen.Render(`{{. | green}}
+{{"world" | bold}}`, "hello")
+	assert.Nil(t, err)
+	assert.Equal(t, "\x1b[32mhello\x1b[m\n\x1b[1mworld\x1b[m\n", screen.buf.String())
+	assert.Equal(t, "\x1b[32mhello\x1b[m\n\x1b[1mworld\x1b[m\n", buf.String())
+}
+
+func TestScreenBufReset(t *testing.T) {
+	var buf bytes.Buffer
+	screen := NewScreenBuf(&buf)
+	screen.buf.WriteString(`This is
+A Buffer full of
+Lines that need to
+Be Reset`)
+	err := screen.Reset()
+	assert.Nil(t, err)
+	assert.Equal(t, strings.Repeat(clearLastLine, 3), screen.buf.String())
+}
+
+func TestScreenBufWrite(t *testing.T) {
+	var buf bytes.Buffer
+	screen := NewScreenBuf(&buf)
+	err := screen.Write(`{{. | green}}
+{{"world" | bold}}`, "hello")
+	assert.Nil(t, err)
+	assert.Equal(t, "\x1b[32mhello\x1b[m\n\x1b[1mworld\x1b[m\n", screen.buf.String())
+}
+
+func TestScreenBufFlush(t *testing.T) {
+	var buf bytes.Buffer
+	str := `This is
+A Buffer full of
+Lines that need to
+Be Reset`
+	screen := NewScreenBuf(&buf)
+	screen.buf.WriteString(str)
+	err := screen.Flush()
+	assert.Nil(t, err)
+	assert.Equal(t, str, buf.String())
 }
