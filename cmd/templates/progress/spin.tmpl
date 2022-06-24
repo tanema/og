@@ -1,0 +1,14 @@
+{{define "run"}}{{spin | cyan | bold}}{{end}}
+{{define "pass"}}{{"✔" | green}}{{end}}
+{{define "fail"}}{{"✘" | red}}{{end}}
+{{define "skip"}}{{"✵" | yellow}}{{end}}
+
+{{define "split" -}}
+{{range .Set.Packages -}}
+  {{template "state" .}} {{.Name}} {{if not $.Cfg.HideElapsed}}({{.Elapsed | cyan}}){{end}} {{template "covpercent" .CoveragePercent}}
+{{end -}}
+{{end}}
+
+{{define "single" -}}
+{{template "state" .Set}} {{.Set.Name}} {{template "covpercent" .Set.CoveragePercent}}
+{{end}}

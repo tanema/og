@@ -1,0 +1,132 @@
+{{define "state"}}
+  {{- if eq .State "run" "cont" "pause" -}}{{template "run" .Name}}
+  {{- else if eq .State "pass" -}}{{template "pass" .Name}}
+  {{- else if eq .State "fail" -}}{{template "fail" .Name}}
+  {{- else if eq .State "skip" -}}{{template "skip" .Name}}
+  {{- end -}}
+{{end}}
+
+{{define "split" -}}
+{{range $pkgname, $pkg := .Set.Packages}}
+  {{- $pkgname | bold }} {{range $tstname, $test := $pkg.Tests -}}
+    {{- template "state" $test -}}
+  {{- end}} ({{$pkg.Elapsed | cyan}}) {{template "covpercent" $pkg.CoveragePercent}}{{if $pkg.Cached}}{{"(cached)" | green}}{{end}}
+{{end}}{{end}}
+
+{{define "single" -}}
+{{range $pkgname, $pkg := .Set.Packages -}}
+  {{- range $testname, $test := $pkg.Tests -}}
+    {{template "state" $test}}
+  {{- end -}}
+{{- end}}
+{{end}}
+
+{{define "results"}}
+{{- if .Cfg.Split -}}
+  {{template "split" .}}
+{{- else -}}
+  {{template "single" .}}
+{{- end -}}
+{{end}}
+
+{{define "build_errors" -}}
+{{"Build Errors"| magenta | bold}}:{{range .Set.BuildErrors}}
+{{.Package}} {{if ne .Path ""}}{{.Path | cyan}}{{if gt .Line 0}}:{{.Line | bold}}{{if gt .Line 0}}:{{.Column | bold}}{{end}}{{end}}{{end}} {{.Message | magenta}}{{if ne .Have ""}}
+    Expected: {{.Want | green}}
+    Actual  : {{.Have | red}}{{end}}{{if not $.Cfg.HideExcerpts}}{{with .Excerpt}}
+    {{with .Before}}{{.Line}}  {{.Code | faint}}{{end}}
+    {{with .Highlight}}{{.Line}}  {{.Prefix | bold}}{{.Highlight | bold | Red}}{{.Suffix | bold}}{{end}}
+    {{with .After}}{{.Line}}  {{.Code | faint}}{{end}}{{end}}{{end}}{{end}}
+{{end}}
+
+{{define "failures" -}}
+{{"Failed Tests"| red | bold}}: {{range .Set.FailedTests }}
+{{.Package}}#{{.Name}}: {{range .Failures}}{{if .Diff}}
+  {{.File | cyan}}:{{.Line |bold}} {{.Diff.Error | red}}
+    {{- if .Diff.Message}} "{{.Diff.Message | bold}}"{{ end}}
+    {{- if ne .Diff.Expected ""}}
+    Expected: {{.Diff.Expected | green}}
+    Actual  : {{.Diff.Actual | red}}{{end}}{{if gt (len .Diff.Comp) 0}}
+    Diff: {{.Diff.Range | cyan}}
+    {
+    {{- range $fieldName, $field := .Diff.Comp}}{{if .Correct}}
+      {{.Name | green | faint}}: {{.Val.Value | green | faint}}
+    {{- else}}
+      {{.Name | bold}}: {{.Expected.Value | green}} {{"!=" | bold}} {{.Actual.Value | red}}
+    {{- end}}{{end}}
+    }
+    {{- end -}}
+  {{else if .IsPanic}}
+  {{"Panic" | bold | Red}} {{index .Messages 0 | red}}{{range .PanicTrace}}
+      {{.Path | cyan}}:{{.Line | bold}}:{{.Fn}}{{end}}
+  {{- else}}
+  {{if ne .File ""}}{{.File | cyan}}:{{.Line |bold}}{{end}} {{if eq (len .Messages) 1 -}}
+      {{index .Messages 0}}
+  {{- else -}}
+  {{range .Messages}}
+      {{.}}
+  {{- end -}}
+  {{- end -}}
+  {{- end -}}
+  {{else}}
+      {{"(no error messages)" | faint}}
+{{end -}}
+{{- end -}}
+{{end}}
+
+{{define "skips" -}}
+{{"Skipped Tests"| yellow | bold}}: {{range .Set.SkippedTests }}
+  {{ .Package | yellow }}#{{.Name | yellow}}
+{{- end}}
+{{end}}
+
+{{define "test_summary"}}
+  {{- printf "Tests(%v)" .Set.TotalTests | bold}}
+  {{- printf " Pass: %v" (.Set.TestSummary.Pass | bold) | green}}
+  {{- printf " Skip: %v" (.Set.TestSummary.Skip | bold) | blue}}
+  {{- printf " Fail: %v" (.Set.TestSummary.Fail | bold) | red}}
+{{printf "Packages(%v)" (len .Set.Packages) | bold}}
+  {{- printf " Pass: %v" (.Set.PkgSummary.Pass | bold) | green}}
+  {{- printf " NoTests: %v" (.Set.PkgSummary.Skip | bold) | blue}}
+  {{- printf " Fail: %v" (.Set.PkgSummary.Fail | bold) | red}}
+  {{- printf " Cached: %v" (.Set.Cached | bold) | green}}
+{{- end}}
+
+{{define "covpercent"}}{{with .}}
+{{- if gt . 75.0 -}}
+    {{printf "%v%%" . | green}}
+{{- else if gt . 45.0 -}}
+    {{printf "%v%%" . | yellow}}
+{{- else -}}
+    {{printf "%v%%" . | red}}
+{{- end -}}
+{{end}}{{end}}
+
+{{define "coverage"}}
+{{"Coverage: " | bold}}{{template "covpercent" .}}
+{{- end}}
+
+{{define "elapsed"}}
+{{printf "Elapsed: %v" (.Set.Elapsed | cyan) | bold}}
+{{end}}
+
+{{define "slow_tests" -}}
+{{"Slow Tests:" | bold}}
+{{range .}}{{.Elapsed | cyan}} {{.Package}} {{.Name}}
+{{end}}
+{{end}}
+
+{{define "summary" -}}
+{{if gt .Set.TotalTests 0}}{{template "results" .}}{{end}}
+{{- if gt (len .Set.BuildErrors) 0}}{{template "build_errors" .}}{{end}}
+{{- if le .Set.TotalTests 0}}{{"No Tests"| bold | Blue}}
+{{end}}
+{{- if gt .Set.TotalTests 0}}
+{{- if gt (len .Set.FailedTests) 0 -}}{{template "failures" .}}{{end}}
+{{- if gt (len .Set.SkippedTests) 0}}{{template "skips" .}}{{end}}
+{{- template "test_summary" .}}
+{{- if not .Cfg.NoCover}}{{template "coverage" .Set.CoveragePercent}}{{end}}
+{{- if not .Cfg.HideElapsed}}{{template "elapsed" .}}{{end}}
+{{- with .Set.SlowTests}}{{template "slow_tests" .}}{{end}}
+{{- end}}
+{{- end}}

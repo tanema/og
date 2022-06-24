@@ -18,32 +18,33 @@ const (
 	defaultTermWidth = 80
 )
 
-// Sprintf formats a string template and outputs console ready text
-func Sprintf(in string, data interface{}) string {
-	var buf bytes.Buffer
-	if err := NewScreenBuf(&buf).Render(in, data); err != nil {
-		panic(err)
-	}
-	return buf.String()
+// Println will print a formatted string out to a writer
+func Println(in string, data interface{}, fs ...string) error {
+	return NewScreenBuf(os.Stderr, fs...).Render(in, data)
 }
 
-// Fprintf will print a formatted string out to a writer
-func Fprintf(w io.Writer, in string, data interface{}) error {
-	return NewScreenBuf(w).Render(in, data)
+// PrintlnTmpl will print a formatted string out to a writer
+func PrintlnTmpl(tmpl string, data interface{}, fs ...string) error {
+	return NewScreenBuf(os.Stderr, fs...).RenderTmpl(tmpl, data)
 }
 
 // ScreenBuf is a convenient way to write to terminal screens. It creates,
 // clears and, moves up or down lines as needed to write the output to the
 // terminal using ANSI escape codes.
 type ScreenBuf struct {
-	w   io.Writer
-	buf *bytes.Buffer
-	mut sync.Mutex
+	w    io.Writer
+	buf  *bytes.Buffer
+	mut  sync.Mutex
+	tmpl *template.Template
 }
 
 // NewScreenBuf creates and initializes a new ScreenBuf.
-func NewScreenBuf(w io.Writer) *ScreenBuf {
-	return &ScreenBuf{buf: &bytes.Buffer{}, w: w}
+func NewScreenBuf(w io.Writer, sources ...string) *ScreenBuf {
+	tmpl := template.New("screenbuf").Funcs(funcMap)
+	for _, src := range sources {
+		template.Must(tmpl.Parse(src))
+	}
+	return &ScreenBuf{buf: &bytes.Buffer{}, w: w, tmpl: tmpl}
 }
 
 // Render will write a text/template out to the console, using a mutex so that
@@ -54,6 +55,19 @@ func (s *ScreenBuf) Render(in string, data interface{}) error {
 		return err
 	}
 	if err := s.Write(in, data); err != nil {
+		return err
+	}
+	return s.Flush()
+}
+
+// RenderTmpl will write an already parsed text/template out to the console, using
+// a mutex so that only a single writer at a time can write. This prevents the
+// buffer from losing sync with the newlines
+func (s *ScreenBuf) RenderTmpl(tmpl string, data interface{}) error {
+	if err := s.Reset(); err != nil {
+		return err
+	}
+	if err := s.WriteTmpl(tmpl, data); err != nil {
 		return err
 	}
 	return s.Flush()
@@ -70,24 +84,35 @@ func (s *ScreenBuf) Reset() error {
 	return err
 }
 
+// WriteTmpl will write an already parsed template to the buffer, this will not
+// render to the screen without calling Flush. It will also not reset the screen,
+// this is append only. Call reset first.
+func (s *ScreenBuf) WriteTmpl(tmpl string, data interface{}) error {
+	var buf bytes.Buffer
+	if err := s.tmpl.Lookup(tmpl).Execute(&buf, data); err != nil {
+		return err
+	}
+	return s.write(buf.String(), data)
+}
+
 // Write will write to the buffer, this will not render to the screen without calling
 // Flush. It will also not reset the screen, this is append only. Call reset first.
 func (s *ScreenBuf) Write(in string, data interface{}) error {
+	var buf bytes.Buffer
+	if err := template.Must(s.tmpl.Parse(in)).Execute(&buf, data); err != nil {
+		return err
+	}
+	return s.write(buf.String(), data)
+}
+
+func (s *ScreenBuf) write(in string, data interface{}) error {
 	s.mut.Lock()
 	defer s.mut.Unlock()
 	width, _, err := term.GetSize(int(os.Stdin.Fd()))
 	if err != nil {
 		width = defaultTermWidth
 	}
-
-	var buf bytes.Buffer
-	if err := template.
-		Must(template.New("").
-			Funcs(funcMap).Parse(in)).
-		Execute(&buf, data); err != nil {
-		return err
-	}
-	tmpl := wrapANSI(buf.String(), width)
+	tmpl := wrapANSI(in, width)
 	if !strings.HasSuffix(tmpl, "\n") {
 		tmpl += "\n"
 	}

@@ -1,7 +1,14 @@
 package main
 
-import "github.com/tanema/og/cmd"
+import (
+	_ "embed"
+
+	"github.com/tanema/og/cmd"
+)
+
+//go:embed VERSION
+var version string
 
 func main() {
-	cmd.Execute()
+	cmd.Execute(version)
 }

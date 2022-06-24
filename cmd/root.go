@@ -2,15 +2,17 @@ package cmd
 
 import (
 	"bufio"
+	"embed"
+	_ "embed" // to allow embedding strings
 	"encoding/json"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"os"
 	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"regexp"
-	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -20,22 +22,46 @@ import (
 	"github.com/fsnotify/fsnotify"
 	"github.com/spf13/cobra"
 
-	"github.com/tanema/og/lib/config"
-	"github.com/tanema/og/lib/display"
 	"github.com/tanema/og/lib/results"
 	"github.com/tanema/og/lib/term"
 )
 
 const (
 	major = 0
-	minor = 0
+	minor = 1
+
+	configPath = "$HOME/.config/og.json"
+	coverPath  = "/tmp/cover.out"
+)
+
+type (
+	renderData struct {
+		Set *results.Set
+		Cfg *Config
+	}
+	// Config captures running config from flags and global config
+	Config struct {
+		Display      string        `json:"display"`
+		Split        bool          `json:"split"`
+		HideExcerpts bool          `json:"hide_excerpts"`
+		HideElapsed  bool          `json:"hide_elapsed"`
+		Threshold    time.Duration `json:"threshold"`
+		NoCover      bool          `json:"no_cover"`
+	}
 )
 
 var (
-	cfg             = &config.Config{}
+	//go:embed templates/progress
+	displays embed.FS
+	//go:embed templates/summary.tmpl
+	summarytmpl string
+	//go:embed templates/version.tmpl
+	versiontmpl     string
+	version         string
+	cfg             = &Config{}
 	cmdMut          sync.Mutex
-	version         bool
 	testFuncPattern = regexp.MustCompile(`func (Test.*)\(t \*testing\.T\)`)
+	root            string
 )
 
 var rootCmd = &cobra.Command{
@@ -59,56 +85,63 @@ Any further go flags can be passed with a -- suffix
 `,
 	PersistentPreRun: func(cmd *cobra.Command, args []string) {
 		cobra.CheckErr(cfg.Load())
-		cobra.CheckErr(validateDisplay(cfg))
 	},
 	Run: func(cmd *cobra.Command, args []string) {
-		if version {
+		if version, _ := cmd.Flags().GetBool("version"); version {
 			printVersion(cfg)
 			return
 		}
-		testargs, err := fmtTestArgs(cfg, args...)
+		testargs, err := fmtTestArgs(cmd, cfg, args...)
 		cobra.CheckErr(err)
-		cobra.CheckErr(runCmd(cfg, testargs...))
-		if cfg.Watch {
-			cobra.CheckErr(watchTestChanges(cfg, args))
+		cobra.CheckErr(runCmd(cmd, cfg, testargs...))
+		if watch, _ := cmd.Flags().GetBool("watch"); watch {
+			cobra.CheckErr(watchTestChanges(cmd, cfg, args))
 		}
 	},
 }
 
 func init() {
-	rootCmd.Flags().BoolVarP(&cfg.Dump, "dump", "D", false, "dumps the final state in json for usage")
-	rootCmd.Flags().StringVarP(&cfg.Display, "display", "d", "dots", "change the display of the test outputs [dots, pdots, names, pnames]")
-	rootCmd.Flags().BoolVarP(&cfg.Watch, "watch", "w", false, "watch for file changes and re-run tests")
-	rootCmd.Flags().BoolVarP(&cfg.HideSkip, "hideskip", "s", false, "hide info about skipped tests")
+	rootCmd.Flags().BoolP("dump", "D", false, "dumps the final state in json for usage")
+	rootCmd.Flags().BoolP("watch", "w", false, "watch for file changes and re-run tests")
+	rootCmd.Flags().Bool("short", false, "run short tests")
+	rootCmd.Flags().Bool("nocache", false, "disable go test cache")
+	rootCmd.Flags().Bool("failfast", false, "terminate after first test failure")
+	rootCmd.Flags().Bool("shuffle", false, "shuffle test order")
+	rootCmd.Flags().BoolP("version", "v", false, "print cmd version")
+
+	rootCmd.Flags().StringVarP(&cfg.Display, "display", "d", "dots", "change the display of the test output [dots,names,icons,bar,spin]")
+	rootCmd.Flags().BoolVarP(&cfg.Split, "split", "s", false, "show progress split up by package")
 	rootCmd.Flags().BoolVarP(&cfg.HideExcerpts, "hideexcerpts", "x", false, "hide code excerpts in build errors")
-	rootCmd.Flags().BoolVarP(&cfg.HideEmpty, "hideempty", "p", false, "hide info about packages without tests")
 	rootCmd.Flags().BoolVarP(&cfg.HideElapsed, "hideelapse", "e", false, "hide the elapsed time output")
-	rootCmd.Flags().BoolVarP(&cfg.HideSummary, "hidesummary", "m", false, "hide the complete summary output")
-	rootCmd.Flags().DurationVarP(&cfg.Threshold, "threshold", "r", 5*time.Second, "output lists of tests slower than the threshold. 0 will disable")
-	rootCmd.Flags().BoolVar(&cfg.Short, "short", false, "run short tests")
-	rootCmd.Flags().BoolVar(&cfg.NoCache, "nocache", false, "disable go test cache")
-	rootCmd.Flags().BoolVar(&cfg.FailFast, "failfast", false, "terminate after first test failure")
-	rootCmd.Flags().BoolVar(&cfg.Shuffle, "shuffle", false, "shuffle test order")
-	rootCmd.Flags().StringVar(&cfg.Cover, "cover", "/tmp/cover.out", "enable coverage and output it to this path")
-	rootCmd.Flags().BoolVarP(&version, "version", "v", false, "print cmd version")
+	rootCmd.Flags().DurationVarP(&cfg.Threshold, "threshold", "r", 10*time.Second, "output lists of tests slower than the threshold. 0 will disable")
+	rootCmd.Flags().BoolVarP(&cfg.NoCover, "nocover", "c", false, "disable coverage")
 }
 
 // Execute is the main entry into the cli
-func Execute() {
+func Execute(ver string) {
+	version = strings.TrimSpace(ver)
 	rootCmd.Execute()
 }
 
-func validateDisplay(cfg *config.Config) error {
-	if _, ok := display.Decorators[cfg.Display]; !ok {
-		return fmt.Errorf("Unknown display type %v", cfg.Display)
+// Load will load global config from config path
+func (config *Config) Load() error {
+	root, _ = filepath.Abs("./")
+	path := os.ExpandEnv(configPath)
+	if info, err := os.Stat(path); err != nil || info.IsDir() {
+		return nil
 	}
-	if cfg.ResultsTemplate == "" {
-		cfg.ResultsTemplate = display.Decorators[cfg.Display]
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("cannot read config file: %v", err)
+	}
+
+	if err := json.Unmarshal(data, config); err != nil {
+		return fmt.Errorf("error while reading config file [%v]: %v", configPath, err)
 	}
 	return nil
 }
 
-func runCmd(cfg *config.Config, args ...string) error {
+func runCmd(cmd *cobra.Command, cfg *Config, args ...string) error {
 	cmdMut.Lock()
 	defer cmdMut.Unlock()
 
@@ -117,68 +150,58 @@ func runCmd(cfg *config.Config, args ...string) error {
 	errReader, errWriter := io.Pipe()
 	defer errReader.Close()
 
-	set := results.New(cfg, args[len(args)-1])
-	deco := display.New(cfg)
-	cmd := exec.Command(args[0], args[1:]...)
-	cmd.Env = os.Environ()
-	cmd.Stderr = errWriter
-	cmd.Stdout = stdWriter
+	set := results.New(args[len(args)-1], cfg.Threshold)
+	tmpl, err := displays.Open(fmt.Sprintf("templates/progress/%v.tmpl", cfg.Display))
+	if err != nil {
+		return fmt.Errorf("undefined display %v", cfg.Display)
+	}
+	display, _ := ioutil.ReadAll(tmpl)
+	screen := term.NewScreenBuf(os.Stderr, summarytmpl, string(display))
+	gocmd := exec.Command(args[0], args[1:]...)
+	gocmd.Env = os.Environ()
+	gocmd.Stderr = errWriter
+	gocmd.Stdout = stdWriter
 
 	var wg sync.WaitGroup
 	wg.Add(2)
-	go consumeTestOutput(&wg, stdReader, set, deco)
-	go consumeErrOutput(&wg, errReader, set)
+	go consume(&wg, stdReader, func(data []byte) {
+		set.Parse(data)
+		screen.RenderTmpl("results", renderData{set, cfg})
+	})
+	go consume(&wg, errReader, set.ParseError)
 
-	cmd.Run()
-	if err := stdWriter.Close(); err != nil {
-		return err
-	}
-	if err := errWriter.Close(); err != nil {
-		return err
-	}
+	gocmd.Run()
+	stdWriter.Close()
+	errWriter.Close()
 	wg.Wait()
-	set.Complete()
-	deco.Summary(set)
-	if cfg.Dump {
-		data, err := json.Marshal(set)
-		if err != nil {
-			return err
-		}
-		fmt.Println(string(data))
+	set.Complete(!cfg.NoCover, coverPath)
+	if err := screen.RenderTmpl("summary", renderData{set, cfg}); err != nil {
+		return err
+	}
+	if dump, _ := cmd.Flags().GetBool("dump"); dump {
+		return dumpJSON(set)
 	}
 	return nil
 }
 
-func consumeTestOutput(wg *sync.WaitGroup, r io.Reader, set *results.Set, deco *display.Renderer) error {
+func consume(wg *sync.WaitGroup, r io.Reader, fn func([]byte)) {
 	defer wg.Done()
 	scanner := bufio.NewScanner(r)
 	scanner.Split(bufio.ScanLines)
 	for scanner.Scan() {
-		set.Parse(scanner.Bytes())
-		deco.Render(set)
+		fn(scanner.Bytes())
 	}
-	return scanner.Err()
 }
 
-func consumeErrOutput(wg *sync.WaitGroup, r io.Reader, set *results.Set) error {
-	defer wg.Done()
-	scanner := bufio.NewScanner(r)
-	scanner.Split(bufio.ScanLines)
-	for scanner.Scan() {
-		set.ParseError(string(scanner.Bytes()))
-	}
-	return scanner.Err()
-}
-
-func watchTestChanges(cfg *config.Config, args []string) error {
-	term.Fprintf(cfg.Out, `{{"Watching" | bold | Green}} press {{"ctr-t"| blue}} to re-run tests`, nil)
-	testargs, _ := fmtTestArgs(cfg, args...)
+func watchTestChanges(cmd *cobra.Command, cfg *Config, args []string) error {
+	term.Println(`{{"Watching" | bold | Green}} press {{"ctr-t"| blue}} to re-run tests`, nil)
+	testargs, _ := fmtTestArgs(cmd, cfg, args...)
 	infoSig := make(chan os.Signal, 1)
 	signal.Notify(infoSig, syscall.SIGINFO)
 	go func() {
 		for {
 			<-infoSig
-			runCmd(cfg, testargs...)
+			runCmd(cmd, cfg, testargs...)
 		}
 	}()
 	paths, _ := findPaths(args)
@@ -214,7 +237,7 @@ func watchTestChanges(cfg *config.Config, args []string) error {
 				return nil
 			}
 			if event.Op&fsnotify.Write == fsnotify.Write && strings.HasSuffix(event.Name, ".go") {
-				if err := onTestEvent(cfg, event.Name); err != nil {
+				if err := onTestEvent(cmd, cfg, event.Name); err != nil {
 					return err
 				}
 			}
@@ -224,37 +247,38 @@ func watchTestChanges(cfg *config.Config, args []string) error {
 	}
 }
 
-func onTestEvent(cfg *config.Config, path string) error {
+func onTestEvent(cmd *cobra.Command, cfg *Config, path string) error {
 	if strings.HasSuffix(path, ".go") && !strings.HasSuffix(path, "_test.go") {
 		path = strings.ReplaceAll(path, ".go", "_test.go")
 	}
 	if _, err := os.Stat(path); err != nil {
 		path = filepath.Dir(path)
 	}
-	path = strings.ReplaceAll(path, cfg.Root, ".")
-	args, err := fmtTestArgs(cfg, path)
+	path = strings.ReplaceAll(path, root, ".")
+	args, err := fmtTestArgs(cmd, cfg, path)
 	if err != nil {
 		return err
 	}
-	return runCmd(cfg, args...)
+	return runCmd(cmd, cfg, args...)
 }
 
-func fmtTestArgs(cfg *config.Config, args ...string) ([]string, error) {
+func fmtTestArgs(cmd *cobra.Command, cfg *Config, args ...string) ([]string, error) {
 	testArgs := []string{"go", "test", "-json", "-v"}
-	if cfg.NoCache {
+	if nocache, _ := cmd.Flags().GetBool("nocache"); nocache {
 		testArgs = append(testArgs, "-count=1")
 	}
-	if cfg.Short {
+	if short, _ := cmd.Flags().GetBool("short"); short {
 		testArgs = append(testArgs, "-short")
 	}
-	if cfg.FailFast {
+	if failFast, _ := cmd.Flags().GetBool("failfast"); failFast {
 		testArgs = append(testArgs, "-failfast")
 	}
-	if cfg.Shuffle {
+	if shuffle, _ := cmd.Flags().GetBool("shuffle"); shuffle {
 		testArgs = append(testArgs, "-shuffle", "on")
 	}
-	if cfg.Cover != "" {
-		testArgs = append(testArgs, "-covermode", "atomic", "-coverprofile", cfg.Cover)
+	if !cfg.NoCover {
+		os.Remove(coverPath)
+		testArgs = append(testArgs, fmt.Sprintf("-coverprofile=%v", coverPath))
 	}
 	paths, tests := findPaths(args)
 	if len(tests) > 0 {
@@ -263,22 +287,10 @@ func fmtTestArgs(cfg *config.Config, args ...string) ([]string, error) {
 	return append(testArgs, paths...), nil
 }
 
-func printVersion(cfg *config.Config) {
-	term.Fprintf(
-		cfg.Out,
-		display.VersionTemplate,
-		struct {
-			Pad, OgVersion, GoVersion string
-		}{
-			Pad:       strings.Repeat(" ", 25),
-			OgVersion: centerString(fmt.Sprintf("og%v.%v", major, minor), 25),
-			GoVersion: centerString(runtime.Version(), 25),
-		})
-}
-
-func centerString(str string, width int) string {
-	spaces := int(float64(width-len(str)) / 2)
-	return strings.Repeat(" ", width-(spaces+len(str))) + str + strings.Repeat(" ", spaces)
+func printVersion(cfg *Config) {
+	spaces := int(float64(25-len(version)) / 2)
+	str := strings.Repeat(" ", 25-(spaces+len(version))) + version + strings.Repeat(" ", spaces)
+	term.Println(versiontmpl, str)
 }
 
 func findPaths(args []string) (paths, tests []string) {
@@ -339,4 +351,13 @@ func findTestsInFile(filepath string, line int) []string {
 		return []string{names[len(names)-1]}
 	}
 	return names
+}
+
+func dumpJSON(set *results.Set) error {
+	data, err := json.Marshal(set)
+	if err != nil {
+		return err
+	}
+	fmt.Println(string(data))
+	return nil
 }

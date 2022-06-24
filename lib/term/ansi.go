@@ -17,6 +17,8 @@ const (
 	clearLastLine = "\033[G\033[1A\033[K"
 )
 
+var spinGlyphs = []rune("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏")
+
 var funcMap = template.FuncMap{
 	"bright":    ansiStyler("3", "9"),
 	"Bright":    ansiStyler("4", "10"),
@@ -41,6 +43,16 @@ var funcMap = template.FuncMap{
 	"Magenta":   ansiStyler("45"),
 	"Cyan":      ansiStyler("46"),
 	"White":     ansiStyler("47"),
+	"spin":      spin,
+}
+
+var spinIndex int
+
+func spin() string {
+	if spinIndex++; spinIndex >= len(spinGlyphs) {
+		spinIndex = 0
+	}
+	return string(spinGlyphs[spinIndex])
 }
 
 type ansiStr struct {

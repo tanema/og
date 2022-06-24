@@ -1,23 +1,20 @@
 package results
 
 import (
+	"bufio"
 	"encoding/json"
-	"fmt"
-	"io/fs"
 	"math"
 	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
-	"github.com/tanema/og/lib/config"
-	"github.com/tanema/og/lib/stopwatch"
-	"golang.org/x/tools/cover"
 	"golang.org/x/tools/go/packages"
 )
+
+var coverLinePat = regexp.MustCompile(`^(.+):([0-9]+)\.([0-9]+),([0-9]+)\.([0-9]+) ([0-9]+) ([0-9]+)$`)
 
 // Action is the states of the tests
 type Action string
@@ -35,42 +32,40 @@ const (
 type (
 	// Summary Captuset to status of tests
 	Summary struct {
-		Pass int `json:"pass"`
-		Fail int `json:"fail"`
-		Skip int `json:"skip"`
+		Pass int `json:"pass,omitempty"`
+		Fail int `json:"fail,omitempty"`
+		Skip int `json:"skip,omitempty"`
 	}
 	// Set is the complete test results for all packages
 	Set struct {
+		*stopwatch
+		Name            string
 		TestSummary     Summary             `json:"test_summary"`
 		PkgSummary      Summary             `json:"pkg_summary"`
-		Mod             string              `json:"mod"`
-		Root            string              `json:"root"`
 		Cached          int                 `json:"cached"`
 		Packages        map[string]*Package `json:"packages"`
 		TotalTests      int                 `json:"total_tests"`
 		State           Action              `json:"state"`
 		BuildErrors     []*BuildError       `json:"build_errors,omitempty"`
-		TimeElapsed     time.Duration       `json:"time_elapsed"`
-		StatementCount  int64               `json:"statements"`
-		CoveredCount    int64               `json:"covered"`
-		CoveragePercent float64             `json:"percent"`
+		StatementCount  int64               `json:"statements,omitempty"`
+		CoveredCount    int64               `json:"covered,omitempty"`
+		CoveragePercent float64             `json:"percent,omitempty"`
+		FailedTests     []*Test             `json:"failed_tests,omitempty"`
+		SkippedTests    []*Test             `json:"skipped_tests,omitempty"`
+		SlowTests       []*Test             `json:"slow_tests,omitempty"`
+		threshold       time.Duration
 		path            string
-		cfg             *config.Config
-		watch           *stopwatch.Stopwatch
 	}
 	// BuildError captures a single build error in a package
 	BuildError struct {
-		Package string            `json:"package"`
-		Lines   []*BuildErrorLine `json:"lines"`
-	}
-	// BuildErrorLine is part of the build error trace
-	BuildErrorLine struct {
-		Path    string `json:"path"`
-		Line    int    `json:"line"`
-		Column  int    `json:"column"`
-		Have    string `json:"have"`
-		Want    string `json:"want"`
+		Package string `json:"package,omitempty"`
+		Path    string `json:"path,omitempty"`
+		Line    int64  `json:"line,omitempty"`
+		Column  int64  `json:"column,omitempty"`
+		Have    string `json:"have,omitempty"`
+		Want    string `json:"want,omitempty"`
 		Message string `json:"message"`
+		Raw     string `json:"raw"`
 	}
 	logLine struct {
 		Package string
@@ -81,17 +76,23 @@ type (
 )
 
 // New creates a new setult set
-func New(cfg *config.Config, path string) *Set {
-	return &Set{
+func New(path string, threshold time.Duration) *Set {
+	name := path
+	pkgs, err := packages.Load(&packages.Config{}, ".")
+	if err == nil && len(pkgs) > 0 {
+		name = strings.ReplaceAll(pkgs[0].PkgPath, "/"+pkgs[0].Name, "")
+	}
+	set := &Set{
+		Name:        name,
+		stopwatch:   &stopwatch{},
 		path:        path,
-		cfg:         cfg,
-		State:       Pass,
-		Mod:         cfg.ModName,
-		Root:        cfg.Root,
-		watch:       stopwatch.Start(),
+		State:       Run,
 		Packages:    map[string]*Package{},
 		BuildErrors: []*BuildError{},
+		threshold:   threshold,
 	}
+	set.start()
+	return set
 }
 
 // Parse will parse a reader line by line, adding the lines to the setult set.
@@ -104,8 +105,11 @@ func (set *Set) Parse(data []byte) {
 }
 
 // Complete will mark the set as finished
-func (set *Set) Complete() error {
-	set.TimeElapsed = set.watch.Stop()
+func (set *Set) Complete(shouldCover bool, coverProfile string) {
+	defer set.stop()
+	if set.State != Fail {
+		set.State = Pass
+	}
 	for _, pkg := range set.Packages {
 		for _, test := range pkg.Tests {
 			if test.State == Continue || test.State == Pause || test.State == Run {
@@ -118,12 +122,12 @@ func (set *Set) Complete() error {
 			}
 		}
 	}
-	if set.cfg.Cover != "" && len(set.Packages) > 0 {
-		if err := set.parseCoverProfile(set.cfg.Cover, set.path); err != nil {
-			return err
-		}
+	sort.Slice(set.SlowTests, func(i, j int) bool {
+		return set.SlowTests[i].Elapsed() > set.SlowTests[j].Elapsed()
+	})
+	if shouldCover {
+		set.parseCoverProfile(coverProfile)
 	}
-	return nil
 }
 
 // Add adds an event line to the setult set
@@ -143,208 +147,70 @@ func (set *Set) Add(action Action, pkgName, testName, output string) {
 	}
 }
 
-func (set *Set) ParseError(data string) {
-	if strings.HasPrefix(data, "# ") {
-		pkg := strings.Split(data, " ")[1]
-		err := &BuildError{
-			Package: pkg,
-			Lines:   []*BuildErrorLine{},
-		}
-		set.BuildErrors = append(set.BuildErrors, err)
-	} else if strings.HasPrefix(strings.TrimSpace(data), "have (") {
-		err := set.BuildErrors[len(set.BuildErrors)-1]
-		line := err.Lines[len(err.Lines)-1]
-		line.Have = strings.TrimSpace(strings.TrimPrefix(data, "have "))
+// ParseError will try its best to parse an error message for formatting
+// to the output, adding excerpts and diffs where possible
+func (set *Set) ParseError(bdata []byte) {
+	data := string(bdata)
+	if strings.HasPrefix(strings.TrimSpace(data), "have (") {
+		builderr := set.BuildErrors[len(set.BuildErrors)-1]
+		builderr.Have = strings.TrimSpace(strings.TrimPrefix(data, "have "))
+		return
 	} else if strings.HasPrefix(strings.TrimSpace(data), "want (") {
-		err := set.BuildErrors[len(set.BuildErrors)-1]
-		line := err.Lines[len(err.Lines)-1]
-		line.Want = strings.TrimSpace(strings.TrimPrefix(data, "want "))
-	} else if !strings.HasPrefix(data, "FAIL") && len(set.BuildErrors) > 0 {
-		buildErr := set.BuildErrors[len(set.BuildErrors)-1]
-		lineNum, colNum, message, path := parseFileLine(data)
-		buildErr.Lines = append(buildErr.Lines, &BuildErrorLine{
-			Path:    path,
-			Line:    lineNum,
-			Column:  colNum,
-			Message: message,
-		})
-	} else {
-		lineNum, colNum, message, path := parseFileLine(data)
-		pkgPath, _ := getFilePackage(path)
-		set.BuildErrors = append(set.BuildErrors, &BuildError{
-			Package: pkgPath,
-			Lines: []*BuildErrorLine{{
-				Path:    path,
-				Line:    lineNum,
-				Column:  colNum,
-				Message: message,
-			}},
-		})
+		builderr := set.BuildErrors[len(set.BuildErrors)-1]
+		builderr.Want = strings.TrimSpace(strings.TrimPrefix(data, "want "))
+		return
 	}
-}
-
-func parseFileLine(data string) (int, int, string, string) {
-	var lineNum, colNum int
-	var message, path string
+	builderr := &BuildError{Raw: data}
+	data = strings.TrimLeft(data, "# ")
 	parts := strings.Split(data, ":")
 	switch len(parts) {
 	case 1:
-		message = parts[0]
+		builderr.Message = parts[0]
 	case 2:
-		path = parts[0]
-		message = parts[1]
+		builderr.Path = parts[0]
+		builderr.Message = parts[1]
 	case 3:
-		path = parts[0]
-		lineNum, _ = strconv.Atoi(parts[1])
-		message = parts[2]
-	case 4:
-		colNum, _ = strconv.Atoi(parts[2])
-		message = parts[3]
+		builderr.Path = parts[0]
+		builderr.Line = atoi(parts[1])
+		builderr.Message = parts[2]
+	default:
+		builderr.Path = parts[0]
+		builderr.Line = atoi(parts[1])
+		builderr.Message = parts[2]
+		builderr.Column = atoi(parts[2])
+		builderr.Message = strings.Join(parts[3:], " ")
 	}
-	return lineNum, colNum, message, path
+	pkgs, err := packages.Load(&packages.Config{Mode: packages.NeedName}, filepath.Dir(builderr.Path))
+	if err == nil && len(pkgs) > 0 {
+		builderr.Package = pkgs[0].PkgPath
+	}
+	set.BuildErrors = append(set.BuildErrors, builderr)
 }
 
-func getFilePackage(filePath string) (string, error) {
-	pkgs, err := packages.Load(&packages.Config{Mode: packages.NeedName}, filepath.Dir(filePath))
+func (set *Set) parseCoverProfile(coverPath string) {
+	rd, err := os.Open(coverPath)
 	if err != nil {
-		return "", err
-	} else if len(pkgs) > 1 {
-		return "", fmt.Errorf("expected only 1 package")
+		return // just bail out if there is no file
 	}
-	return pkgs[0].PkgPath, nil
-}
-
-func (set *Set) parseCoverProfile(coverPath, projectdir string) error {
-	projectFiles, err := filesForPath(projectdir)
-	if err != nil {
-		return err
-	}
-	profiles, err := cover.ParseProfiles(coverPath)
-	if err != nil {
-		return err
-	}
-	filePathToProfileMap := make(map[string]*cover.Profile)
-	for _, prof := range profiles {
-		filePathToProfileMap[prof.FileName] = prof
-	}
-	for _, filePath := range projectFiles {
-		pkgPath, err := getFilePackage(filePath)
-		if err != nil {
-			return err
-		}
-		profile := filePathToProfileMap[fmt.Sprintf("%v/%v", pkgPath, filepath.Base(filePath))]
-		if _, ok := set.Packages[pkgPath]; !ok {
+	defer rd.Close()
+	s := bufio.NewScanner(rd)
+	for s.Scan() {
+		line := s.Text()
+		if strings.HasPrefix(line, "mode: ") {
 			continue
 		}
-		pkg := set.Packages[pkgPath]
-		if err := pkg.fileCoverage(profile, filePath); err != nil {
-			return err
+		matches := coverLinePat.FindStringSubmatch(line)
+		pkg := set.Packages[filepath.Dir(matches[1])]
+		stmts := atoi(matches[6])
+		pkg.StatementCount += stmts
+		set.StatementCount += stmts
+		if atoi(matches[7]) > 0 {
+			pkg.CoveredCount += stmts
+			set.CoveredCount += stmts
 		}
-		set.StatementCount += pkg.StatementCount
-		set.CoveredCount += pkg.CoveredCount
+		pkg.CoveragePercent = calcPercent(pkg.StatementCount, pkg.CoveredCount)
 	}
 	set.CoveragePercent = calcPercent(set.StatementCount, set.CoveredCount)
-	return nil
-}
-
-// Any will return if there are any tests at all
-func (set *Set) Any() bool {
-	return set.TotalTests > 0
-}
-
-// Failures will collect all the test failures across all packages into a single
-// collection
-func (set *Set) Failures() map[string]map[string][]*Failure {
-	failures := map[string]map[string][]*Failure{}
-	for _, pkg := range set.Packages {
-		for _, tst := range pkg.Tests {
-			if tst.State == Fail && len(tst.Failures) > 0 {
-				if _, ok := failures[pkg.Name]; !ok {
-					failures[pkg.Name] = map[string][]*Failure{}
-				}
-				failures[pkg.Name][tst.Name] = append(failures[pkg.Name][tst.Name], tst.Failures...)
-			}
-		}
-	}
-	return failures
-}
-
-// Skips will collect all the skipped test names from all the packages into a
-// single collection
-func (set *Set) Skips() map[string][]string {
-	skips := map[string][]string{}
-	for _, pkg := range set.Packages {
-		for _, tst := range pkg.Tests {
-			if tst.State == Skip {
-				skips[pkg.Name] = append(skips[pkg.Name], tst.Name)
-			}
-		}
-	}
-	return skips
-}
-
-// FilteredPackages returns the packages that have tests.
-func (set *Set) FilteredPackages(filterNone bool) map[string]*Package {
-	if filterNone {
-		return set.Packages
-	}
-	filtered := map[string]*Package{}
-	for name, pkg := range set.Packages {
-		if pkg.State != Skip {
-			filtered[name] = pkg
-		}
-	}
-	return filtered
-}
-
-// RankedTests returns tests that are slower than the thsethold and ranks them.
-func (set *Set) RankedTests(thsethold time.Duration) []*Test {
-	tests := []*Test{}
-	for _, pkg := range set.Packages {
-		for _, test := range pkg.Tests {
-			if test.TimeElapsed >= thsethold {
-				tests = append(tests, test)
-			}
-		}
-	}
-	sort.Slice(tests, func(i, j int) bool {
-		return tests[i].TimeElapsed > tests[j].TimeElapsed
-	})
-	return tests
-}
-
-func filesForPath(dir string) ([]string, error) {
-	base := filepath.Base(dir)
-	if base == "..." {
-		dir = filepath.Dir(dir)
-	}
-	if fi, err := os.Stat(dir); err != nil {
-		return nil, err
-	} else if !fi.IsDir() {
-		return nil, fmt.Errorf("path must be a directory")
-	}
-	recursive := base == "..."
-	files := make([]string, 0)
-	err := filepath.WalkDir(dir, func(path string, info fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		} else if info.IsDir() {
-			if path == dir {
-				return nil
-			} else if !recursive {
-				return filepath.SkipDir
-			}
-		}
-		if regexp.MustCompile(".go$").MatchString(path) {
-			if regexp.MustCompile("_test.go$").MatchString(path) {
-				return nil
-			}
-			path, _ = filepath.Abs(path)
-			files = append(files, path)
-		}
-		return nil
-	})
-	return files, err
 }
 
 func calcPercent(statements, covered int64) float64 {

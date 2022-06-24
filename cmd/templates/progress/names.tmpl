@@ -1,0 +1,17 @@
+{{define "run"}}{{"RUN " | faint | Cyan | white}}  {{.}}{{end}}
+{{define "pass"}}{{"PASS" | Green | white | bold}}  {{.}}{{end}}
+{{define "fail"}}{{"FAIL" | Red | white | bold}}  {{.}}{{end}}
+{{define "skip"}}{{"NONE" | Blue | white | bold}}  {{.}}{{end}}
+
+{{define "split" -}}
+{{range $pkgname, $pkg := .Set.Packages }}
+  {{- range $testname, $test := $pkg.Tests -}}
+    {{template "state" $test}} {{if not $.Cfg.HideElapsed}}({{$pkg.Elapsed | cyan}}){{end}}
+{{end}}{{end -}}
+{{end}}
+
+{{define "single" -}}
+{{range $pkgname, $pkg := .Set.Packages -}}
+  {{template "state" $pkg}} {{if not $.Cfg.HideElapsed}}({{$pkg.Elapsed | cyan}}) {{end}}{{template "covpercent" $pkg.CoveragePercent}}{{if $pkg.Cached}}{{"(cached)" | green}}{{end}}
+{{end -}}
+{{end}}

@@ -2,25 +2,23 @@ package results
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/tanema/og/lib/config"
-	"github.com/tanema/og/lib/stopwatch"
 )
 
 func TestTestResult(t *testing.T) {
 	setup := func() (*Set, *Package, *Test) {
-		cfg := &config.Config{ModName: "github.com/tanema/og", Root: "/workspace/og"}
-		set := New(cfg, "")
+		set := New("", 10*time.Minute)
 		set.Packages["nope"] = &Package{
-			watch: stopwatch.Start(),
-			Name:  "nope",
-			State: Run,
+			stopwatch: &stopwatch{},
+			Name:      "nope",
+			State:     Run,
 			Tests: map[string]*Test{"TestFoo": {
-				watch:   stopwatch.Start(),
-				Name:    "TestFoo",
-				State:   Run,
-				Package: "nope",
+				stopwatch: &stopwatch{},
+				Name:      "TestFoo",
+				State:     Run,
+				Package:   "nope",
 			}},
 		}
 		return set, set.Packages["nope"], set.Packages["nope"].Tests["TestFoo"]
@@ -29,7 +27,6 @@ func TestTestResult(t *testing.T) {
 	t.Run("pass", func(t *testing.T) {
 		set, pkg, test := setup()
 		test.result(set, pkg, Pass, "")
-		assert.Equal(t, Pass, set.State)
 		assert.Equal(t, 1, pkg.Pass)
 		assert.Equal(t, 0, pkg.Fail)
 		assert.Equal(t, 0, pkg.Skip)
@@ -47,7 +44,6 @@ func TestTestResult(t *testing.T) {
 	t.Run("skip", func(t *testing.T) {
 		set, pkg, test := setup()
 		test.result(set, pkg, Skip, "")
-		assert.Equal(t, Pass, set.State)
 		assert.Equal(t, 0, pkg.Pass)
 		assert.Equal(t, 0, pkg.Fail)
 		assert.Equal(t, 1, pkg.Skip)
@@ -57,37 +53,33 @@ func TestTestResult(t *testing.T) {
 	t.Run("paus", func(t *testing.T) {
 		set, pkg, test := setup()
 		test.result(set, pkg, Pause, "")
-		assert.Equal(t, Pass, set.State)
 		assert.Equal(t, 0, pkg.Pass)
 		assert.Equal(t, 0, pkg.Fail)
 		assert.Equal(t, 0, pkg.Skip)
 		assert.Equal(t, Pause, test.State)
-		assert.True(t, test.watch.Paused())
+		assert.True(t, test.paused)
 	})
 	t.Run("cont", func(t *testing.T) {
 		set, pkg, test := setup()
 		test.result(set, pkg, Continue, "")
-		assert.Equal(t, Pass, set.State)
 		assert.Equal(t, 0, pkg.Pass)
 		assert.Equal(t, 0, pkg.Fail)
 		assert.Equal(t, 0, pkg.Skip)
 		assert.Equal(t, Continue, test.State)
-		assert.False(t, pkg.watch.Paused())
+		assert.False(t, pkg.paused)
 	})
 	t.Run("run", func(t *testing.T) {
 		set, pkg, test := setup()
 		test.result(set, pkg, Run, "")
-		assert.Equal(t, Pass, set.State)
 		assert.Equal(t, 0, pkg.Pass)
 		assert.Equal(t, 0, pkg.Fail)
 		assert.Equal(t, 0, pkg.Skip)
 		assert.Equal(t, Run, test.State)
-		assert.False(t, pkg.watch.Paused())
+		assert.False(t, pkg.paused)
 	})
 	t.Run("output", func(t *testing.T) {
 		set, pkg, test := setup()
 		test.result(set, pkg, Output, "this is output")
-		assert.Equal(t, Pass, set.State)
 		assert.Equal(t, 0, pkg.Pass)
 		assert.Equal(t, 0, pkg.Fail)
 		assert.Equal(t, 0, pkg.Skip)

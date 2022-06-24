@@ -7,9 +7,6 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-
-	"github.com/tanema/og/lib/config"
-	"github.com/tanema/og/lib/display"
 )
 
 type strWCr struct {
@@ -24,102 +21,55 @@ func (str *strWCr) Close() error {
 	return nil
 }
 
-func TestValidateDisplay(t *testing.T) {
-	t.Run("validate that the display is valid", func(t *testing.T) {
-		cfg := &config.Config{Display: "nope"}
-		assert.EqualError(t, validateDisplay(cfg), "Unknown display type nope")
-	})
-	t.Run("sets default templates", func(t *testing.T) {
-		cfg := &config.Config{Display: "dots"}
-		assert.Nil(t, validateDisplay(cfg, "test"))
-		assert.Equal(t, display.Decorators["dots"], cfg.ResultsTemplate)
-	})
-	t.Run("does not change custom templates", func(t *testing.T) {
-		cfg := &config.Config{Display: "dots", ResultsTemplate: "custom"}
-		assert.Nil(t, validateDisplay(cfg, "test"))
-		assert.Equal(t, "custom", cfg.ResultsTemplate)
-	})
-}
-
 func TestFmtArgs(t *testing.T) {
 	t.Run("no args", func(t *testing.T) {
-		cfg := &config.Config{}
-		args, err := fmtTestArgs(cfg)
+		args, err := fmtTestArgs(rootCmd, &Config{NoCover: true})
 		assert.Nil(t, err)
 		assert.Equal(t, []string{"go", "test", "-json", "-v", "./..."}, args)
 	})
 
 	t.Run("test names", func(t *testing.T) {
-		cfg := &config.Config{}
-		args, err := fmtTestArgs(cfg, "TestFmtArgs", "TestValidateDisplay")
+		args, err := fmtTestArgs(rootCmd, &Config{NoCover: true}, "TestFmtArgs", "TestValidateDisplay")
 		assert.Nil(t, err)
 		assert.Equal(t, []string{"go", "test", "-json", "-v", "-run", "TestFmtArgs|TestValidateDisplay", "./..."}, args)
 	})
 
 	t.Run("filepaths", func(t *testing.T) {
-		cfg := &config.Config{}
-		args, err := fmtTestArgs(cfg, "./root_test.go")
+		args, err := fmtTestArgs(rootCmd, &Config{NoCover: true}, "./root_test.go")
 		assert.Nil(t, err)
 		path, tests := findPaths([]string{"./root_test.go"})
 		assert.Equal(t, append([]string{"go", "test", "-json", "-v", "-run", strings.Join(tests, "|")}, path...), args)
 	})
 
 	t.Run("filepaths with numbers", func(t *testing.T) {
-		cfg := &config.Config{}
-		args, err := fmtTestArgs(cfg, "./root_test.go:30")
+		args, err := fmtTestArgs(rootCmd, &Config{NoCover: true}, "./root_test.go:30")
 		assert.Nil(t, err)
-		assert.Equal(t, []string{"go", "test", "-json", "-v", "-run", "TestValidateDisplay", "./."}, args)
+		assert.Equal(t, []string{"go", "test", "-json", "-v", "-run", "TestFmtArgs", "./."}, args)
 	})
 
 	t.Run("filepaths with test names", func(t *testing.T) {
-		cfg := &config.Config{}
-		args, err := fmtTestArgs(cfg, "./root_test.go:TestFmtArgs")
+		args, err := fmtTestArgs(rootCmd, &Config{NoCover: true}, "./root_test.go:TestFmtArgs")
 		assert.Nil(t, err)
 		assert.Equal(t, []string{"go", "test", "-json", "-v", "-run", "TestFmtArgs", "./."}, args)
 	})
 
 	t.Run("package", func(t *testing.T) {
-		cfg := &config.Config{}
-		args, err := fmtTestArgs(cfg, "./")
+		args, err := fmtTestArgs(rootCmd, &Config{NoCover: true}, "./")
 		assert.Nil(t, err)
 		assert.Equal(t, []string{"go", "test", "-json", "-v", "./"}, args)
 	})
 
 	t.Run("cfg flags", func(t *testing.T) {
-		cfg := &config.Config{NoCache: true}
-		args, err := fmtTestArgs(cfg)
+		args, err := fmtTestArgs(rootCmd, &Config{NoCover: true})
 		assert.Nil(t, err)
-		assert.Equal(t, []string{"go", "test", "-json", "-v", "-count=1", "./..."}, args)
+		assert.Equal(t, []string{"go", "test", "-json", "-v", "./..."}, args)
 	})
 
 	t.Run("extended cfg flags", func(t *testing.T) {
-		cfg := &config.Config{
-			NoCache:  true,
-			Short:    true,
-			FailFast: true,
-			Shuffle:  true,
-			Cover:    "file.out",
-		}
-		args, err := fmtTestArgs(cfg)
+		args, err := fmtTestArgs(rootCmd, &Config{NoCover: false})
 		assert.Nil(t, err)
-		assert.Equal(t, []string{"go", "test", "-json", "-v",
-			"-count=1", "-short", "-failfast", "-shuffle",
-			"on", "-covermode", "atomic", "-coverprofile", "file.out", "./...",
-		}, args)
+		assert.Equal(t, []string{"go", "test", "-json", "-v", fmt.Sprintf("-coverprofile=%v", coverPath), "./..."}, args)
 	})
-}
-
-func TestPrintVersion(t *testing.T) {
-	var buf bytes.Buffer
-	cfg := &config.Config{Out: &buf}
-	printVersion(cfg)
-}
-
-func TestCenterString(t *testing.T) {
-	assert.Equal(t, "         foo        ", centerString("foo", 20))
-	assert.Equal(t, " foo ", centerString("foo", 5))
-	assert.Equal(t, "  foo ", centerString("foo", 6))
-	assert.Equal(t, "   foo  ", centerString("foo", 8))
 }
 
 func TestFindPaths(t *testing.T) {
@@ -129,16 +79,16 @@ func TestFindPaths(t *testing.T) {
 		tests []string
 	}{
 		{paths: []string{"./..."}},
-		{args: []string{"testdata"}, paths: []string{"./testdata"}},
-		{args: []string{"./testdata"}, paths: []string{"./testdata"}},
-		{args: []string{"testdata/go.go"}, paths: []string{"./testdata"}, tests: []string{"TestHelloWorld", "TestGoodbyeWorld"}},
-		{args: []string{"testdata/go_test.go"}, paths: []string{"./testdata"}, tests: []string{"TestHelloWorld", "TestGoodbyeWorld"}},
-		{args: []string{"testdata/go_test.go:6"}, paths: []string{"./testdata"}, tests: []string{"TestHelloWorld"}},
-		{args: []string{"testdata/go_test.go:TestGoodbyeWorld"}, paths: []string{"./testdata"}, tests: []string{"TestGoodbyeWorld"}},
+		{args: []string{"../_testdata"}, paths: []string{"./../_testdata"}},
+		{args: []string{"../_testdata"}, paths: []string{"./../_testdata"}},
+		{args: []string{"../_testdata/go.go"}, paths: []string{"./../_testdata"}, tests: []string{"TestHelloWorld", "TestGoodbyeWorld"}},
+		{args: []string{"../_testdata/go_test.go"}, paths: []string{"./../_testdata"}, tests: []string{"TestHelloWorld", "TestGoodbyeWorld"}},
+		{args: []string{"../_testdata/go_test.go:6"}, paths: []string{"./../_testdata"}, tests: []string{"TestHelloWorld"}},
+		{args: []string{"../_testdata/go_test.go:TestGoodbyeWorld"}, paths: []string{"./../_testdata"}, tests: []string{"TestGoodbyeWorld"}},
 		{args: []string{"TestGoodbyeWorld"}, paths: []string{"./..."}, tests: []string{"TestGoodbyeWorld"}},
-		{args: []string{"testdata", "TestGoodbyeWorld"}, paths: []string{"./testdata"}, tests: []string{"TestGoodbyeWorld"}},
-		{args: []string{"testdata", "TestHelloWorld", "TestGoodbyeWorld"}, paths: []string{"./testdata"}, tests: []string{"TestHelloWorld", "TestGoodbyeWorld"}},
-		{args: []string{"testdata", "TestFoo"}, paths: []string{"./testdata"}, tests: []string{"TestFoo"}},
+		{args: []string{"../_testdata", "TestGoodbyeWorld"}, paths: []string{"./../_testdata"}, tests: []string{"TestGoodbyeWorld"}},
+		{args: []string{"../_testdata", "TestHelloWorld", "TestGoodbyeWorld"}, paths: []string{"./../_testdata"}, tests: []string{"TestHelloWorld", "TestGoodbyeWorld"}},
+		{args: []string{"../_testdata", "TestFoo"}, paths: []string{"./../_testdata"}, tests: []string{"TestFoo"}},
 	}
 
 	for _, testcase := range cases {
@@ -155,20 +105,20 @@ func TestFindTestsInFile(t *testing.T) {
 		line  int
 		tests []string
 	}{
-		{path: "./testdata", line: -1},
-		{path: "./testdata/not_there.go", line: -1},
-		{path: "./testdata/go.go", line: -1, tests: []string{}},
-		{path: "./testdata/go_test.go", line: -1, tests: []string{"TestHelloWorld", "TestGoodbyeWorld"}},
-		{path: "./testdata/go_test.go", line: 2, tests: []string{"TestHelloWorld"}},
-		{path: "./testdata/go_test.go", line: 3, tests: []string{"TestHelloWorld"}},
-		{path: "./testdata/go_test.go", line: 4, tests: []string{"TestHelloWorld"}},
-		{path: "./testdata/go_test.go", line: 5, tests: []string{"TestHelloWorld"}},
-		{path: "./testdata/go_test.go", line: 6, tests: []string{"TestHelloWorld"}},
-		{path: "./testdata/go_test.go", line: 8, tests: []string{"TestHelloWorld"}},
-		{path: "./testdata/go_test.go", line: 9, tests: []string{"TestGoodbyeWorld"}},
-		{path: "./testdata/go_test.go", line: 10, tests: []string{"TestGoodbyeWorld"}},
-		{path: "./testdata/go_test.go", line: 11, tests: []string{"TestGoodbyeWorld"}},
-		{path: "./testdata/go_test.go", line: 12, tests: []string{"TestGoodbyeWorld"}},
+		{path: "../_testdata", line: -1},
+		{path: "../_testdata/not_there.go", line: -1},
+		{path: "../_testdata/go.go", line: -1, tests: []string{}},
+		{path: "../_testdata/go_test.go", line: -1, tests: []string{"TestHelloWorld", "TestGoodbyeWorld"}},
+		{path: "../_testdata/go_test.go", line: 2, tests: []string{"TestHelloWorld"}},
+		{path: "../_testdata/go_test.go", line: 3, tests: []string{"TestHelloWorld"}},
+		{path: "../_testdata/go_test.go", line: 4, tests: []string{"TestHelloWorld"}},
+		{path: "../_testdata/go_test.go", line: 5, tests: []string{"TestHelloWorld"}},
+		{path: "../_testdata/go_test.go", line: 6, tests: []string{"TestHelloWorld"}},
+		{path: "../_testdata/go_test.go", line: 8, tests: []string{"TestHelloWorld"}},
+		{path: "../_testdata/go_test.go", line: 9, tests: []string{"TestGoodbyeWorld"}},
+		{path: "../_testdata/go_test.go", line: 10, tests: []string{"TestGoodbyeWorld"}},
+		{path: "../_testdata/go_test.go", line: 11, tests: []string{"TestGoodbyeWorld"}},
+		{path: "../_testdata/go_test.go", line: 12, tests: []string{"TestGoodbyeWorld"}},
 	}
 
 	for i, testcase := range cases {

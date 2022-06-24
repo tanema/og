@@ -8,18 +8,6 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestSprintf(t *testing.T) {
-	actual := Sprintf(`{{"Hello" | green}}`, nil)
-	assert.Equal(t, "\033[32mHello\033[m\n", actual)
-}
-
-func TestFprintf(t *testing.T) {
-	var buf bytes.Buffer
-	err := Fprintf(&buf, `{{"Hello" | green}}`, nil)
-	assert.Nil(t, err)
-	assert.Equal(t, "\033[32mHello\033[m\n", buf.String())
-}
-
 func TestScreenBufRender(t *testing.T) {
 	var buf bytes.Buffer
 	screen := NewScreenBuf(&buf)
