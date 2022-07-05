@@ -10,20 +10,18 @@ import (
 	"io/ioutil"
 	"os"
 	"os/exec"
-	"os/signal"
 	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
-	"github.com/fsnotify/fsnotify"
 	"github.com/spf13/cobra"
 
 	"github.com/tanema/og/lib/results"
 	"github.com/tanema/og/lib/term"
+	"github.com/tanema/og/lib/watch"
 )
 
 const (
@@ -195,71 +193,34 @@ func consume(wg *sync.WaitGroup, r io.Reader, fn func([]byte)) {
 
 func watchTestChanges(cmd *cobra.Command, cfg *Config, args []string) error {
 	term.Println(`{{"Watching" | bold | Green}} press {{"ctr-t"| blue}} to re-run tests`, nil)
-	testargs, _ := fmtTestArgs(cmd, cfg, args...)
-	infoSig := make(chan os.Signal, 1)
-	signal.Notify(infoSig, syscall.SIGINFO)
-	go func() {
-		for {
-			<-infoSig
-			runCmd(cmd, cfg, testargs...)
-		}
-	}()
-	paths, _ := findPaths(args)
-
-	fsntfy, err := fsnotify.NewWatcher()
+	watcher, err := watch.New()
 	if err != nil {
 		return err
 	}
-
-	for _, path := range paths {
-		path, err := filepath.Abs(strings.TrimSuffix(path, "/..."))
-		if err != nil {
-			return err
-		}
-		if err = filepath.Walk(path, func(path string, info os.FileInfo, err error) error {
-			if err != nil {
-				return err
-			} else if info.IsDir() || strings.HasSuffix(path, ".go") {
-				if err := fsntfy.Add(path); err != nil {
-					return err
-				}
-			}
-			return nil
-		}); err != nil {
-			return err
-		}
-	}
+	go watcher.Start()
 
 	for {
 		select {
-		case event, ok := <-fsntfy.Events:
+		case path, ok := <-watcher.Changes:
 			if !ok {
 				return nil
 			}
-			if event.Op&fsnotify.Write == fsnotify.Write && strings.HasSuffix(event.Name, ".go") {
-				if err := onTestEvent(cmd, cfg, event.Name); err != nil {
-					return err
-				}
+			path = strings.ReplaceAll(path, root, ".")
+			term.Println(`{{"Running" | bold | Magenta}} {{.Path | bold}} [{{.Time}}]`, struct{ Time, Path string }{Time: now(), Path: path})
+			args, err := fmtTestArgs(cmd, cfg, path)
+			if err != nil {
+				return err
 			}
-		case err := <-fsntfy.Errors:
+			return runCmd(cmd, cfg, args...)
+		case err := <-watcher.Errors:
 			return err
 		}
 	}
 }
 
-func onTestEvent(cmd *cobra.Command, cfg *Config, path string) error {
-	if strings.HasSuffix(path, ".go") && !strings.HasSuffix(path, "_test.go") {
-		path = strings.ReplaceAll(path, ".go", "_test.go")
-	}
-	if _, err := os.Stat(path); err != nil {
-		path = filepath.Dir(path)
-	}
-	path = strings.ReplaceAll(path, root, ".")
-	args, err := fmtTestArgs(cmd, cfg, path)
-	if err != nil {
-		return err
-	}
-	return runCmd(cmd, cfg, args...)
+func now() string {
+	current := time.Now()
+	return fmt.Sprintf("%02d:%02d:%02d", current.Hour(), current.Minute(), current.Second())
 }
 
 func fmtTestArgs(cmd *cobra.Command, cfg *Config, args ...string) ([]string, error) {
@@ -277,7 +238,6 @@ func fmtTestArgs(cmd *cobra.Command, cfg *Config, args ...string) ([]string, err
 		testArgs = append(testArgs, "-shuffle", "on")
 	}
 	if !cfg.NoCover {
-		os.Remove(coverPath)
 		testArgs = append(testArgs, fmt.Sprintf("-coverprofile=%v", coverPath))
 	}
 	paths, tests := findPaths(args)
